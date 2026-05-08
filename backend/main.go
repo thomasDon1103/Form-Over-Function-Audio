@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/dhowden/tag"
 )
 
 // audioDir is the only directory from which /stream will serve files.
@@ -15,7 +19,7 @@ import (
 const audioDir = "audio"
 
 // defaultFile is served when /stream is hit with no ?file= query.
-const defaultFile = "Sonic Mega Collection Plus - Game Library, Extras, & Options.mp3"
+const defaultFile = "Florida Rains - Smoked Old Fashioned - 01 Lowball Glass.mp3"
 
 // allowedTypes maps a file extension (lowercase, with dot) to the
 // Content-Type we'll advertise. Anything not in this map is rejected.
@@ -65,7 +69,7 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f, err := os.Open(path)
+	audioFile, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "File not found", http.StatusNotFound)
@@ -74,9 +78,9 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	defer f.Close()
+	defer audioFile.Close()
 
-	stat, err := f.Stat()
+	stat, err := audioFile.Stat()
 	if err != nil {
 		http.Error(w, "Could not stat file", http.StatusInternalServerError)
 		return
@@ -85,77 +89,260 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	http.ServeContent(w, r, name, stat.ModTime(), f)
+	http.ServeContent(w, r, name, stat.ModTime(), audioFile)
 }
 
-// listAudioFiles returns the supported audio files inside audioDir.
-func listAudioFiles() ([]string, error) {
+func writeAlbumMetaData() {
+	albumFolders, err := os.ReadDir(audioDir)
+	// Audio dir is broken
+	if err != nil {
+		log.Printf("writeAlbumMetaData: could not read audio dir: %v", err)
+		return
+	}
+
+	for _, e := range albumFolders {
+		// Should be a directory of albums in the audio dir
+		if !e.IsDir() {
+			continue
+		}
+
+		albumDir := filepath.Join(audioDir, e.Name())
+		metadataPath := filepath.Join(albumDir, "albumMetadata.json")
+		artPath := filepath.Join(albumDir, "albumArt.jpg")
+
+		_, metaErr := os.Stat(metadataPath)
+		_, artErr := os.Stat(artPath)
+		metadataExists := metaErr == nil
+		artExists := artErr == nil
+
+		// Skip if both exist already
+		if metadataExists && artExists {
+			continue
+		}
+
+		// Loop over files in album dir
+		albumFiles, err2 := os.ReadDir(albumDir)
+		// Somehow this dir is broken
+		if err2 != nil {
+			log.Printf("writeAlbumMetaData: could not read album dir %q: %v", albumDir, err2)
+			continue
+		}
+
+		for _, af := range albumFiles {
+			if af.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(af.Name()))
+			if ext != ".mp3" && ext != ".flac" {
+				continue
+			}
+
+			filePath := filepath.Join(albumDir, af.Name())
+			f, err := os.Open(filePath)
+			if err != nil {
+				log.Printf("writeAlbumMetaData: could not open %q: %v", filePath, err)
+				continue
+			}
+
+			metadata, err := tag.ReadFrom(f)
+			f.Close()
+			if err != nil {
+				log.Printf("writeAlbumMetaData: could not read tags from %q: %v", filePath, err)
+				continue
+			}
+
+			// Write metadata JSON if it doesn't already exist
+			if !metadataExists {
+				album := AlbumInfo{
+					Folder: e.Name(),
+					Title:  metadata.Album(),
+					Artist: metadata.Artist(),
+					Year:   metadata.Year(),
+					Genre:  metadata.Genre(),
+				}
+				if picture := metadata.Picture(); picture != nil {
+					album.Mime = picture.MIMEType
+				}
+
+				data, err := json.MarshalIndent(album, "", "  ")
+				if err != nil {
+					log.Printf("writeAlbumMetaData: could not marshal metadata for %q: %v", albumDir, err)
+				} else if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+					log.Printf("writeAlbumMetaData: could not write %q: %v", metadataPath, err)
+				} else {
+					metadataExists = true
+				}
+			}
+
+			// Write album art JPEG if it doesn't already exist
+			if !artExists {
+				if picture := metadata.Picture(); picture != nil {
+					if err := os.WriteFile(artPath, picture.Data, 0644); err != nil {
+						log.Printf("writeAlbumMetaData: could not write %q: %v", artPath, err)
+					} else {
+						artExists = true
+					}
+				}
+			}
+
+			// We have what we need from this album
+			break
+		}
+	}
+}
+
+// safeAlbumDir validates a user-supplied album folder name and returns
+// the path to that album folder inside audioDir. It rejects path-traversal
+// attempts and any name that doesn't correspond to an existing directory.
+func safeAlbumDir(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("empty folder name")
+	}
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid folder name")
+	}
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid folder name")
+	}
+
+	path := filepath.Join(audioDir, name)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("album folder not found")
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not an album folder")
+	}
+	return path, nil
+}
+
+// getAlbumLibraryFromMetadata reads each album subdirectory's
+// albumMetadata.json file and aggregates them into a single slice.
+// Albums missing a metadata file are skipped (call writeAlbumMetaData first).
+func getAlbumLibraryFromMetadata() ([]AlbumInfo, error) {
 	entries, err := os.ReadDir(audioDir)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+
+	var library []AlbumInfo
 	for _, e := range entries {
-		if e.IsDir() {
+		if !e.IsDir() {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(e.Name()))
-		if _, ok := allowedTypes[ext]; ok {
-			out = append(out, e.Name())
+
+		metadataPath := filepath.Join(audioDir, e.Name(), "albumMetadata.json")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			log.Printf("getAlbumLibraryFromMetadata: skipping %q: %v", e.Name(), err)
+			continue
 		}
+
+		var album AlbumInfo
+		if err := json.Unmarshal(data, &album); err != nil {
+			log.Printf("getAlbumLibraryFromMetadata: could not parse %q: %v", metadataPath, err)
+			continue
+		}
+
+		// Make sure folder is populated even if the JSON pre-dates the field.
+		if album.Folder == "" {
+			album.Folder = e.Name()
+		}
+		library = append(library, album)
 	}
-	return out, nil
+	return library, nil
 }
 
-// indexHandler serves a tiny HTML page with an <audio> element per file
-// so you can test /stream by visiting https://localhost:8080/ .
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	files, err := listAudioFiles()
+// libraryHandler serves the aggregated metadata for all albums as JSON.
+func libraryHandler(w http.ResponseWriter, r *http.Request) {
+	library, err := getAlbumLibraryFromMetadata()
 	if err != nil {
-		http.Error(w, "Could not list audio dir: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Could not read library: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(library)
+}
+
+// albumArtHandler serves the albumArt.jpg for the album folder named in ?folder=.
+func albumArtHandler(w http.ResponseWriter, r *http.Request) {
+	folder := r.URL.Query().Get("folder")
+	albumDir, err := safeAlbumDir(folder)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var b strings.Builder
-	b.WriteString(`<!doctype html>
-<html>
-  <head><title>Audio Stream Test</title></head>
-  <body>
-    <h1>Audio Stream Test</h1>
-`)
-	if len(files) == 0 {
-		fmt.Fprintf(&b, "    <p>No audio files found in <code>%s/</code>.</p>\n", html.EscapeString(audioDir))
+	artPath := filepath.Join(albumDir, "albumArt.jpg")
+	if _, err := os.Stat(artPath); err != nil {
+		http.Error(w, "album art not found", http.StatusNotFound)
+		return
 	}
-	for _, name := range files {
-		escName := html.EscapeString(name)
-		// url.QueryEscape would be more correct, but for an in-browser
-		// test page using the browser's own URL handling is fine.
-		fmt.Fprintf(&b, `    <section>
-      <h3>%s</h3>
-      <audio controls preload="none" src="/stream?file=%s"></audio>
-    </section>
-`, escName, escName)
-	}
-	b.WriteString("  </body>\n</html>")
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(b.String()))
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, artPath)
+}
+
+// Test endpoint for serving images via https
+func imageHandler(w http.ResponseWriter, r *http.Request) {
+	// Open the audio file (MP3 or FLAC)
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		name = defaultFile
+	}
+
+	path, _, err := safeAudioPath(name)
+	albumFile, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer albumFile.Close()
+
+	// Read metadata tags
+	metadata, err := tag.ReadFrom(albumFile)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Extract the picture
+	albumImage := metadata.Picture()
+	if albumImage == nil {
+		fmt.Println("No album art found.")
+		return
+	}
+
+	// Access image metadata and raw bytes
+	fmt.Printf("Format: %s\n", albumImage.MIMEType)
+	fmt.Printf("Extension: %s\n", albumImage.Ext)
+
+	w.Header().Set("Content-Type", albumImage.MIMEType)
+	http.ServeContent(w, r, "cover", time.Time{}, bytes.NewReader(albumImage.Data))
 }
 
 func main() {
 	if _, err := os.Stat(audioDir); os.IsNotExist(err) {
 		log.Printf("warning: %q directory does not exist; create it and drop audio files in.", audioDir)
 	}
+	// Preprocessing for albums the user has already added
+	 writeAlbumMetaData()
 
-	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/stream", streamHandler)
+	http.HandleFunc("/art", imageHandler)
+	http.HandleFunc("/library", libraryHandler)
+	http.HandleFunc("/albumArt", albumArtHandler)
 
 	log.Println("Listening on https://localhost:8080")
 	log.Fatal(http.ListenAndServeTLS(":8080", "localhost.pem", "localhost-key.pem", nil))
 }
 
+type AlbumInfo struct {
+	Folder string `json:"folder"` // Album folder name within audioDir
+	Artist string `json:"artist"`
+	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Genre  string `json:"genre"`
+	Mime   string `json:"mime_type"` // e.g., "image/jpeg"
+}
