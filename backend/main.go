@@ -93,6 +93,29 @@ func streamHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, stat.ModTime(), audioFile)
 }
 
+func writeAlbumMetaData() {
+	albumFolders, err := os.ReadDir(audioDir)
+	// Audio dir is broken
+	if err != nil {
+		return
+	}
+
+	for _, e := range albumFolders {
+		// Should be a directory of albums in the audio dir
+		if !e.IsDir() {
+			continue
+		}
+
+		// Loop over files in dir
+		albumFiles, err2 := os.ReadDir(audioDir)
+		// Somehow this dir is broken
+		if err2 != nil {
+			return
+		}
+
+	}
+}
+
 // Returns a JSON object of all of the albums in the audio dir
 func getAlbumLibrary() ([]AlbumInfo, error) {
 	entries, err := os.ReadDir(audioDir)
@@ -100,7 +123,7 @@ func getAlbumLibrary() ([]AlbumInfo, error) {
 		return nil, err
 	}
 	var library []AlbumInfo
-	for _, e := range entries {
+	for _, e := range albumFiles {
 		if e.IsDir() {
 			continue
 		}
@@ -127,6 +150,8 @@ func getAlbumLibrary() ([]AlbumInfo, error) {
 
 			album.Title = metadata.Title()
 			album.Artist = metadata.Artist()
+			album.Year = metadata.Year()
+			album.Genre = metadata.Genre()
 
 			// Handle Image
 			if picture := metadata.Picture(); picture != nil {
@@ -211,6 +236,8 @@ func main() {
 type AlbumInfo struct {
 	Artist string `json:"artist"`
 	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Genre  string `json:"genre"`
 	Image  string `json:"image"`     // Base64 string
 	Mime   string `json:"mime_type"` // e.g., "image/jpeg"
 }
