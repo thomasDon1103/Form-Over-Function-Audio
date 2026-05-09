@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/dhowden/tag"
 )
@@ -285,52 +283,14 @@ func albumArtHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, artPath)
 }
 
-// Test endpoint for serving images via https
-func imageHandler(w http.ResponseWriter, r *http.Request) {
-	// Open the audio file (MP3 or FLAC)
-	name := r.URL.Query().Get("file")
-	if name == "" {
-		name = defaultFile
-	}
-
-	path, _, err := safeAudioPath(name)
-	albumFile, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer albumFile.Close()
-
-	// Read metadata tags
-	metadata, err := tag.ReadFrom(albumFile)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Extract the picture
-	albumImage := metadata.Picture()
-	if albumImage == nil {
-		fmt.Println("No album art found.")
-		return
-	}
-
-	// Access image metadata and raw bytes
-	fmt.Printf("Format: %s\n", albumImage.MIMEType)
-	fmt.Printf("Extension: %s\n", albumImage.Ext)
-
-	w.Header().Set("Content-Type", albumImage.MIMEType)
-	http.ServeContent(w, r, "cover", time.Time{}, bytes.NewReader(albumImage.Data))
-}
-
 func main() {
 	if _, err := os.Stat(audioDir); os.IsNotExist(err) {
 		log.Printf("warning: %q directory does not exist; create it and drop audio files in.", audioDir)
 	}
 	// Preprocessing for albums the user has already added
-	 writeAlbumMetaData()
+	writeAlbumMetaData()
 
 	http.HandleFunc("/stream", streamHandler)
-	http.HandleFunc("/art", imageHandler)
 	http.HandleFunc("/library", libraryHandler)
 	http.HandleFunc("/albumArt", albumArtHandler)
 
