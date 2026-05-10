@@ -110,6 +110,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     setState(() {
       _isLoading = true;
       _status = 'Connecting to $baseUrl...';
+      _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
       _selectedAlbum = null;
       _selectedTrack = null;
@@ -163,6 +164,22 @@ class _AudioHomePageState extends State<AudioHomePage> {
         });
       }
     }
+  }
+
+  void _disconnectFromServer() {
+    _player.pause();
+    setState(() {
+      _connectedBaseUrl = null;
+      _albums = <AlbumInfo>[];
+      _selectedAlbum = null;
+      _selectedTrack = null;
+      _selectedTrackIndex = null;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _isPlaying = false;
+      _isRefreshing = false;
+      _status = 'Disconnected.';
+    });
   }
 
   Future<void> _refreshLibrary() async {
@@ -366,49 +383,55 @@ class _AudioHomePageState extends State<AudioHomePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final connectedBaseUrl = _connectedBaseUrl;
     return Scaffold(
       backgroundColor: colorScheme.surface,
       body: SafeArea(
-        child: Column(
-          children: [
-            ConnectionBar(
-              controller: _serverController,
-              connectedBaseUrl: _connectedBaseUrl,
-              isLoading: _isLoading,
-              isStartingServer: _isStartingServer,
-              isRefreshing: _isRefreshing,
-              canStartServer: _serverControl.canStartServer,
-              onConnect: _connectToServer,
-              onRefresh: _refreshLibrary,
-              onStartServer: _startLocalServer,
-            ),
-            Expanded(
-              child: _albums.isEmpty
-                  ? EmptyState(status: _status)
-                  : LibraryView(
-                      albums: _albums,
-                      selectedTrack: _selectedTrack,
-                      onTrackSelected: _playTrack,
-                    ),
-            ),
-            PlayerBar(
-              selectedAlbum: _selectedAlbum,
-              selectedTrack: _selectedTrack,
-              position: _position,
-              duration: _duration,
-              isPlaying: _isPlaying,
-              canPlayPause: _selectedTrack != null,
-              canPlayPrevious: _hasPreviousTrack,
-              canPlayNext: _hasNextTrack,
-              status: _status,
-              supportsInlinePlayback: _player.supportsInlinePlayback,
-              onPlayPause: _togglePlayPause,
-              onPrevious: _playPreviousTrack,
-              onNext: _playNextTrack,
-              onSeek: _seekTo,
-            ),
-          ],
-        ),
+        child: connectedBaseUrl == null
+            ? ConnectionScreen(
+                controller: _serverController,
+                status: _status,
+                isLoading: _isLoading,
+                isStartingServer: _isStartingServer,
+                canStartServer: _serverControl.canStartServer,
+                onConnect: _connectToServer,
+                onStartServer: _startLocalServer,
+              )
+            : Column(
+                children: [
+                  LibraryToolbar(
+                    connectedBaseUrl: connectedBaseUrl,
+                    isRefreshing: _isRefreshing,
+                    onRefresh: _refreshLibrary,
+                    onDisconnect: _disconnectFromServer,
+                  ),
+                  Expanded(
+                    child: _albums.isEmpty
+                        ? EmptyState(status: _status)
+                        : LibraryView(
+                            albums: _albums,
+                            selectedTrack: _selectedTrack,
+                            onTrackSelected: _playTrack,
+                          ),
+                  ),
+                  PlayerBar(
+                    selectedAlbum: _selectedAlbum,
+                    selectedTrack: _selectedTrack,
+                    position: _position,
+                    duration: _duration,
+                    isPlaying: _isPlaying,
+                    canPlayPause: _selectedTrack != null,
+                    canPlayPrevious: _hasPreviousTrack,
+                    canPlayNext: _hasNextTrack,
+                    status: _status,
+                    supportsInlinePlayback: _player.supportsInlinePlayback,
+                    onPlayPause: _togglePlayPause,
+                    onPrevious: _playPreviousTrack,
+                    onNext: _playNextTrack,
+                    onSeek: _seekTo,
+                  ),
+                ],
+              ),
       ),
     );
   }

@@ -10,7 +10,7 @@ class ServerStartResult {
 class ServerControl {
   Process? _process;
 
-  bool get canStartServer => true;
+  bool get canStartServer => Platform.isWindows;
 
   Future<ServerStartResult> start() async {
     if (_process != null) {

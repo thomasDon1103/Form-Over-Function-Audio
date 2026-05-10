@@ -8,9 +8,10 @@ void main() {
   ) async {
     await tester.pumpWidget(const FormOverFunctionAudioApp());
 
+    expect(find.text('Connect to server'), findsOneWidget);
     expect(find.text('Audio server address'), findsOneWidget);
     expect(find.byIcon(Icons.wifi_tethering), findsOneWidget);
-    expect(find.byIcon(Icons.refresh), findsOneWidget);
-    expect(find.textContaining('Connect to an audio server'), findsOneWidget);
+    expect(find.byIcon(Icons.refresh), findsNothing);
+    expect(find.text('Disconnect'), findsNothing);
   });
 }
