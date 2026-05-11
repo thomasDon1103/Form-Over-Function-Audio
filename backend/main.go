@@ -366,11 +366,32 @@ func getAlbumTracks(albumLocation string) []TrackInfo {
 
 		trackPath := filepath.ToSlash(filepath.Join(albumLocation, file.Name()))
 		tracks = append(tracks, TrackInfo{
-			Title: fileNameWithoutExt(file.Name()),
+			Title: trackTitleFromMetadata(filepath.Join(albumDir, file.Name()), file.Name()),
 			Path:  trackPath,
 		})
 	}
 	return tracks
+}
+
+func trackTitleFromMetadata(path string, fileName string) string {
+	fallback := fileNameWithoutExt(fileName)
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fallback
+	}
+	defer f.Close()
+
+	metadata, err := tag.ReadFrom(f)
+	if err != nil {
+		return fallback
+	}
+
+	title := strings.TrimSpace(metadata.Title())
+	if title == "" {
+		return fallback
+	}
+	return title
 }
 
 func fileNameWithoutExt(name string) string {

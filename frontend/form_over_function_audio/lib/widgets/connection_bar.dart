@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+
 // First screen shown before a server is connected. The parent owns networking
 // and process-start behavior so this widget can stay presentation-focused.
 class ConnectionScreen extends StatelessWidget {
@@ -25,6 +27,8 @@ class ConnectionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
     final textTheme = Theme.of(context).textTheme;
     final busy = isLoading || isStartingServer;
 
@@ -34,9 +38,12 @@ class ConnectionScreen extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: Card(
-            elevation: 1,
+            color: collection.panelStrong,
+            elevation: 18,
+            shadowColor: collection.glow.withValues(alpha: 0.28),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
+              side: BorderSide(color: collection.panelBorder),
             ),
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -134,10 +141,13 @@ class LibraryToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
 
     return Material(
-      elevation: 1,
-      color: colorScheme.surface,
+      elevation: 14,
+      shadowColor: collection.glow.withValues(alpha: 0.18),
+      color: collection.panelStrong,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: LayoutBuilder(
@@ -164,13 +174,18 @@ class LibraryToolbar extends StatelessWidget {
               children: [
                 IconButton.filledTonal(
                   onPressed: isRefreshing ? null : onRefresh,
+                  style: IconButton.styleFrom(
+                    backgroundColor: collection.glow.withValues(alpha: 0.18),
+                    foregroundColor: colorScheme.primary,
+                    disabledBackgroundColor: collection.panel,
+                    disabledForegroundColor: colorScheme.onSurfaceVariant,
+                  ),
                   icon: isRefreshing
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.refresh),
-                  tooltip: 'Refresh library',
                 ),
                 FilledButton.icon(
                   onPressed: onDisconnect,

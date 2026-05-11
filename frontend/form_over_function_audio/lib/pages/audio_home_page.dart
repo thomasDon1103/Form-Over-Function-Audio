@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../app_theme.dart';
 import '../models/album_info.dart';
 import '../server_control.dart';
 import '../stream_player.dart';
@@ -29,6 +30,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final ServerControl _serverControl = ServerControl();
 
   List<AlbumInfo> _albums = <AlbumInfo>[];
+  AlbumInfo? _browsingAlbum;
   AlbumInfo? _selectedAlbum;
   TrackInfo? _selectedTrack;
   int? _selectedTrackIndex;
@@ -40,6 +42,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
   bool _isLoading = false;
   bool _isStartingServer = false;
   bool _isRefreshing = false;
+  bool _screenVeilVisible = false;
+  bool _libraryVeilVisible = false;
   StreamSubscription<PlayerSnapshot>? _playerSnapshotSubscription;
   StreamSubscription<void>? _playerEndedSubscription;
   StreamSubscription<String>? _playerErrorSubscription;
@@ -112,6 +116,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _status = 'Connecting to $baseUrl...';
       _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
+      _browsingAlbum = null;
       _selectedAlbum = null;
       _selectedTrack = null;
       _selectedTrackIndex = null;
@@ -144,7 +149,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
         return;
       }
 
-      setState(() {
+      await _swapScreenContent(() {
         _connectedBaseUrl = baseUrl;
         _albums = albums;
         _status =
@@ -168,18 +173,21 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   void _disconnectFromServer() {
     _player.pause();
-    setState(() {
-      _connectedBaseUrl = null;
-      _albums = <AlbumInfo>[];
-      _selectedAlbum = null;
-      _selectedTrack = null;
-      _selectedTrackIndex = null;
-      _position = Duration.zero;
-      _duration = Duration.zero;
-      _isPlaying = false;
-      _isRefreshing = false;
-      _status = 'Disconnected.';
-    });
+    unawaited(
+      _swapScreenContent(() {
+        _connectedBaseUrl = null;
+        _albums = <AlbumInfo>[];
+        _browsingAlbum = null;
+        _selectedAlbum = null;
+        _selectedTrack = null;
+        _selectedTrackIndex = null;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _isPlaying = false;
+        _isRefreshing = false;
+        _status = 'Disconnected.';
+      }),
+    );
   }
 
   Future<void> _refreshLibrary() async {
@@ -222,6 +230,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       setState(() {
         _connectedBaseUrl = baseUrl;
         _albums = _mergeAlbums(_albums, newAlbums);
+        _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
         _status = newAlbums.isEmpty
             ? 'No new albums found.'
             : 'Added ${newAlbums.length} new album${newAlbums.length == 1 ? '' : 's'}.';
@@ -253,6 +262,37 @@ class _AudioHomePageState extends State<AudioHomePage> {
       byLocation[album.location] = album;
     }
     return byLocation.values.toList();
+  }
+
+  AlbumInfo? _findUpdatedBrowsingAlbum(
+    AlbumInfo? browsingAlbum,
+    List<AlbumInfo> albums,
+  ) {
+    if (browsingAlbum == null) {
+      return null;
+    }
+    for (final album in albums) {
+      if (album.location == browsingAlbum.location) {
+        return album;
+      }
+    }
+    return null;
+  }
+
+  void _showAlbum(AlbumInfo album) {
+    unawaited(
+      _swapLibraryContent(() {
+        _browsingAlbum = album;
+      }),
+    );
+  }
+
+  void _showLibraryGrid() {
+    unawaited(
+      _swapLibraryContent(() {
+        _browsingAlbum = null;
+      }),
+    );
   }
 
   Future<void> _playTrack(AlbumInfo album, TrackInfo track) async {
@@ -380,6 +420,65 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return 'http://$trimmed';
   }
 
+  Widget _buildLibraryContent() {
+    if (_albums.isEmpty) {
+      return EmptyState(key: const ValueKey('empty-library'), status: _status);
+    }
+
+    final browsingAlbum = _browsingAlbum;
+    if (browsingAlbum == null) {
+      return LibraryView(
+        key: const ValueKey('album-grid'),
+        albums: _albums,
+        onAlbumSelected: _showAlbum,
+      );
+    }
+
+    return AlbumDetailView(
+      key: ValueKey('album-detail-${browsingAlbum.location}'),
+      album: browsingAlbum,
+      selectedTrack: _selectedTrack,
+      onBack: _showLibraryGrid,
+      onTrackSelected: _playTrack,
+    );
+  }
+
+  Future<void> _swapScreenContent(VoidCallback updateContent) async {
+    setState(() {
+      _screenVeilVisible = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 560));
+    if (!mounted) {
+      return;
+    }
+    setState(updateContent);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _screenVeilVisible = false;
+    });
+  }
+
+  Future<void> _swapLibraryContent(VoidCallback updateContent) async {
+    setState(() {
+      _libraryVeilVisible = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted) {
+      return;
+    }
+    setState(updateContent);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _libraryVeilVisible = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -387,51 +486,114 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return Scaffold(
       backgroundColor: colorScheme.surface,
       body: SafeArea(
-        child: connectedBaseUrl == null
-            ? ConnectionScreen(
-                controller: _serverController,
-                status: _status,
-                isLoading: _isLoading,
-                isStartingServer: _isStartingServer,
-                canStartServer: _serverControl.canStartServer,
-                onConnect: _connectToServer,
-                onStartServer: _startLocalServer,
-              )
-            : Column(
-                children: [
-                  LibraryToolbar(
-                    connectedBaseUrl: connectedBaseUrl,
-                    isRefreshing: _isRefreshing,
-                    onRefresh: _refreshLibrary,
-                    onDisconnect: _disconnectFromServer,
-                  ),
-                  Expanded(
-                    child: _albums.isEmpty
-                        ? EmptyState(status: _status)
-                        : LibraryView(
-                            albums: _albums,
-                            selectedTrack: _selectedTrack,
-                            onTrackSelected: _playTrack,
+        child: DecoratedBox(
+          decoration: _appBackground(context),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              connectedBaseUrl == null
+                  ? ConnectionScreen(
+                      key: const ValueKey('connection-screen'),
+                      controller: _serverController,
+                      status: _status,
+                      isLoading: _isLoading,
+                      isStartingServer: _isStartingServer,
+                      canStartServer: _serverControl.canStartServer,
+                      onConnect: _connectToServer,
+                      onStartServer: _startLocalServer,
+                    )
+                  : Column(
+                      key: const ValueKey('library-shell'),
+                      children: [
+                        LibraryToolbar(
+                          connectedBaseUrl: connectedBaseUrl,
+                          isRefreshing: _isRefreshing,
+                          onRefresh: _refreshLibrary,
+                          onDisconnect: _disconnectFromServer,
+                        ),
+                        Expanded(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              _buildLibraryContent(),
+                              _TransitionVeil(visible: _libraryVeilVisible),
+                            ],
                           ),
-                  ),
-                  PlayerBar(
-                    selectedAlbum: _selectedAlbum,
-                    selectedTrack: _selectedTrack,
-                    position: _position,
-                    duration: _duration,
-                    isPlaying: _isPlaying,
-                    canPlayPause: _selectedTrack != null,
-                    canPlayPrevious: _hasPreviousTrack,
-                    canPlayNext: _hasNextTrack,
-                    status: _status,
-                    supportsInlinePlayback: _player.supportsInlinePlayback,
-                    onPlayPause: _togglePlayPause,
-                    onPrevious: _playPreviousTrack,
-                    onNext: _playNextTrack,
-                    onSeek: _seekTo,
-                  ),
-                ],
-              ),
+                        ),
+                        PlayerBar(
+                          selectedAlbum: _selectedAlbum,
+                          selectedTrack: _selectedTrack,
+                          position: _position,
+                          duration: _duration,
+                          isPlaying: _isPlaying,
+                          canPlayPause: _selectedTrack != null,
+                          canPlayPrevious: _hasPreviousTrack,
+                          canPlayNext: _hasNextTrack,
+                          status: _status,
+                          supportsInlinePlayback:
+                              _player.supportsInlinePlayback,
+                          onPlayPause: _togglePlayPause,
+                          onPrevious: _playPreviousTrack,
+                          onNext: _playNextTrack,
+                          onSeek: _seekTo,
+                        ),
+                      ],
+                    ),
+              _TransitionVeil(visible: _screenVeilVisible),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  BoxDecoration _appBackground(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          collection.backgroundTop,
+          collection.backgroundMiddle,
+          collection.backgroundBottom,
+        ],
+        stops: const [0, 0.48, 1],
+      ),
+    );
+  }
+}
+
+class _TransitionVeil extends StatelessWidget {
+  const _TransitionVeil({required this.visible});
+
+  final bool visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: visible
+            ? const Duration(milliseconds: 560)
+            : const Duration(milliseconds: 820),
+        curve: visible ? Curves.easeInOutCubic : Curves.easeOutQuart,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment.topCenter,
+              radius: 1.25,
+              colors: [
+                collection.backgroundMiddle.withValues(alpha: 0.96),
+                collection.backgroundBottom.withValues(alpha: 0.98),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

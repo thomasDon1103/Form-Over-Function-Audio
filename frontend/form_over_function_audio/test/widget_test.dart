@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:form_over_function_audio/main.dart';
+import 'package:form_over_function_audio/models/album_info.dart';
+import 'package:form_over_function_audio/widgets/library_view.dart';
 
 void main() {
   testWidgets('shows the server connection controls', (
@@ -13,5 +15,65 @@ void main() {
     expect(find.byIcon(Icons.wifi_tethering), findsOneWidget);
     expect(find.byIcon(Icons.refresh), findsNothing);
     expect(find.text('Disconnect'), findsNothing);
+  });
+
+  testWidgets('shows album grid and album detail tracks', (
+    WidgetTester tester,
+  ) async {
+    const album = AlbumInfo(
+      location: 'library/sample',
+      artUrl: '',
+      tracks: [
+        TrackInfo(
+          title: 'Opening Track',
+          path: 'opening.mp3',
+          streamUrl: 'http://localhost:8080/stream?path=opening.mp3',
+        ),
+      ],
+      artist: 'Sample Artist',
+      title: 'Sample Album',
+      year: 2026,
+      genre: 'Test',
+    );
+
+    AlbumInfo? tappedAlbum;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LibraryView(
+            albums: const [album],
+            onAlbumSelected: (album) => tappedAlbum = album,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Sample Album'), findsOneWidget);
+    expect(find.text('Opening Track'), findsNothing);
+
+    await tester.tap(find.text('Sample Album'));
+    expect(tappedAlbum, album);
+
+    var wentBack = false;
+    TrackInfo? tappedTrack;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AlbumDetailView(
+            album: album,
+            selectedTrack: null,
+            onBack: () => wentBack = true,
+            onTrackSelected: (_, track) => tappedTrack = track,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Opening Track'), findsOneWidget);
+    await tester.tap(find.text('Opening Track'));
+    expect(tappedTrack, album.tracks.single);
+
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    expect(wentBack, isTrue);
   });
 }

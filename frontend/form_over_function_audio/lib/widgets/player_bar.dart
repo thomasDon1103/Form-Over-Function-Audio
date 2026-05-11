@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
 import '../models/album_info.dart';
 
 // Persistent bottom playback surface. It renders transport controls and the
@@ -40,6 +41,8 @@ class PlayerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
     final maxMilliseconds = duration.inMilliseconds <= 0
         ? 1.0
         : duration.inMilliseconds.toDouble();
@@ -48,8 +51,9 @@ class PlayerBar extends StatelessWidget {
         .toDouble();
 
     return Material(
-      elevation: 3,
-      color: Theme.of(context).colorScheme.surface,
+      elevation: 18,
+      shadowColor: collection.glow.withValues(alpha: 0.24),
+      color: collection.panelStrong,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: LayoutBuilder(
@@ -143,17 +147,14 @@ class _TransportControls extends StatelessWidget {
         IconButton(
           onPressed: canPlayPrevious ? onPrevious : null,
           icon: const Icon(Icons.skip_previous),
-          tooltip: 'Previous track',
         ),
         IconButton.filled(
           onPressed: canPlayPause ? onPlayPause : null,
           icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
-          tooltip: isPlaying ? 'Pause' : 'Play',
         ),
         IconButton(
           onPressed: canPlayNext ? onNext : null,
           icon: const Icon(Icons.skip_next),
-          tooltip: 'Next track',
         ),
       ],
     );
