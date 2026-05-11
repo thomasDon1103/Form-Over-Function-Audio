@@ -52,6 +52,9 @@ void main() {
     expect(find.text('Opening Track'), findsNothing);
 
     await tester.tap(find.text('Sample Album'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 750));
+    await tester.pump();
     expect(tappedAlbum, album);
 
     var wentBack = false;
