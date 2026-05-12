@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:form_over_function_audio/main.dart';
 import 'package:form_over_function_audio/models/album_info.dart';
 import 'package:form_over_function_audio/widgets/library_view.dart';
+import 'package:form_over_function_audio/widgets/player_bar.dart';
 
 void main() {
   testWidgets('shows the server connection controls', (
@@ -78,5 +79,61 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.arrow_back));
     expect(wentBack, isTrue);
+  });
+
+  testWidgets('player panel expands to show album art', (
+    WidgetTester tester,
+  ) async {
+    const album = AlbumInfo(
+      location: 'library/sample',
+      artUrl: '',
+      tracks: [
+        TrackInfo(
+          title: 'Opening Track',
+          path: 'opening.mp3',
+          streamUrl: 'http://localhost:8080/stream?path=opening.mp3',
+        ),
+      ],
+      artist: 'Sample Artist',
+      title: 'Sample Album',
+      year: 2026,
+      genre: 'Test',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: PlayerBar(
+              selectedAlbum: album,
+              selectedTrack: album.tracks.single,
+              position: const Duration(seconds: 12),
+              duration: const Duration(minutes: 3),
+              isPlaying: true,
+              canPlayPause: true,
+              canPlayPrevious: true,
+              canPlayNext: false,
+              status: 'Playing from http://localhost:8080',
+              supportsInlinePlayback: true,
+              onPlayPause: () {},
+              onPrevious: () {},
+              onNext: () {},
+              onSeek: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.keyboard_arrow_up), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byIcon(Icons.keyboard_arrow_up));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    expect(find.byIcon(Icons.album), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

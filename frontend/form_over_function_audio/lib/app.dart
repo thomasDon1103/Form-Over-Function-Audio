@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import 'app_theme.dart';
 import 'pages/audio_home_page.dart';
@@ -13,6 +14,13 @@ class FormOverFunctionAudioApp extends StatelessWidget {
       title: 'Form Over Function Audio',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
+      builder: (context, child) {
+        final app = child ?? const SizedBox.shrink();
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+          return ExcludeSemantics(child: app);
+        }
+        return app;
+      },
       home: const AudioHomePage(),
     );
   }
