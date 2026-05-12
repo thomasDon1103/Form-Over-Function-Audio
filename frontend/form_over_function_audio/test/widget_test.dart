@@ -130,10 +130,12 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byIcon(Icons.keyboard_arrow_up));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
     expect(find.byIcon(Icons.album), findsOneWidget);
+    expect(find.byType(CustomPaint), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

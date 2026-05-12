@@ -12,6 +12,7 @@ import '../widgets/connection_bar.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/library_view.dart';
 import '../widgets/player_bar.dart';
+import '../widgets/transition_veil.dart';
 
 // Main screen for the audio streamer. This class coordinates server access,
 // library state, and player commands while the widgets render the UI sections.
@@ -30,6 +31,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final ServerControl _serverControl = ServerControl();
 
   List<AlbumInfo> _albums = <AlbumInfo>[];
+  List<String> _revealingAlbumLocations = <String>[];
+  List<String> _fadingAlbumLocations = <String>[];
   AlbumInfo? _browsingAlbum;
   AlbumInfo? _selectedAlbum;
   TrackInfo? _selectedTrack;
@@ -116,6 +119,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _status = 'Connecting to $baseUrl...';
       _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
+      _revealingAlbumLocations = <String>[];
+      _fadingAlbumLocations = <String>[];
       _browsingAlbum = null;
       _selectedAlbum = null;
       _selectedTrack = null;
@@ -151,7 +156,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
       await _swapScreenContent(() {
         _connectedBaseUrl = baseUrl;
-        _albums = albums;
+        _albums = _sortAlbumsByArtist(albums);
+        _revealingAlbumLocations = <String>[];
+        _fadingAlbumLocations = <String>[];
         _status =
             'Connected to ${albums.length} album${albums.length == 1 ? '' : 's'}.';
       });
@@ -177,6 +184,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _swapScreenContent(() {
         _connectedBaseUrl = null;
         _albums = <AlbumInfo>[];
+        _revealingAlbumLocations = <String>[];
+        _fadingAlbumLocations = <String>[];
         _browsingAlbum = null;
         _selectedAlbum = null;
         _selectedTrack = null;
@@ -227,14 +236,59 @@ class _AudioHomePageState extends State<AudioHomePage> {
         return;
       }
 
+      final mergedAlbums = _sortAlbumsByArtist(
+        _mergeAlbums(_albums, newAlbums),
+      );
+      final newAlbumLocations = newAlbums
+          .map((album) => album.location)
+          .toList();
+      final shiftedAlbumLocations = _shiftedAlbumLocations(
+        currentAlbums: _albums,
+        nextAlbums: mergedAlbums,
+      );
+      final revealLocations = _affectedAlbumLocations(
+        sortedAlbums: mergedAlbums,
+        newAlbumLocations: newAlbumLocations,
+        shiftedAlbumLocations: shiftedAlbumLocations,
+      );
+
+      if (newAlbums.isEmpty) {
+        setState(() {
+          _connectedBaseUrl = baseUrl;
+          _albums = mergedAlbums;
+          _revealingAlbumLocations = <String>[];
+          _fadingAlbumLocations = <String>[];
+          _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
+          _status = 'No new albums found.';
+        });
+        return;
+      }
+
+      if (shiftedAlbumLocations.isNotEmpty) {
+        setState(() {
+          _connectedBaseUrl = baseUrl;
+          _revealingAlbumLocations = <String>[];
+          _fadingAlbumLocations = shiftedAlbumLocations;
+          _status =
+              'Adding ${newAlbums.length} new album${newAlbums.length == 1 ? '' : 's'}...';
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (!mounted) {
+          return;
+        }
+      }
+
       setState(() {
         _connectedBaseUrl = baseUrl;
-        _albums = _mergeAlbums(_albums, newAlbums);
+        _albums = mergedAlbums;
+        _revealingAlbumLocations = revealLocations;
+        _fadingAlbumLocations = <String>[];
         _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
-        _status = newAlbums.isEmpty
-            ? 'No new albums found.'
-            : 'Added ${newAlbums.length} new album${newAlbums.length == 1 ? '' : 's'}.';
+        _status =
+            'Added ${newAlbums.length} new album${newAlbums.length == 1 ? '' : 's'}.';
       });
+      _clearRevealedAlbumsAfterAnimation(revealLocations);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -251,6 +305,38 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
   }
 
+  void _clearRevealedAlbumsAfterAnimation(List<String> locations) {
+    if (locations.isEmpty) {
+      return;
+    }
+
+    final totalDuration = Duration(
+      milliseconds: 500 + ((locations.length - 1) * 140) + 80,
+    );
+    unawaited(
+      Future<void>.delayed(totalDuration, () {
+        if (!mounted || !_sameLocations(_revealingAlbumLocations, locations)) {
+          return;
+        }
+        setState(() {
+          _revealingAlbumLocations = <String>[];
+        });
+      }),
+    );
+  }
+
+  bool _sameLocations(List<String> left, List<String> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var i = 0; i < left.length; i += 1) {
+      if (left[i] != right[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   List<AlbumInfo> _mergeAlbums(
     List<AlbumInfo> currentAlbums,
     List<AlbumInfo> incomingAlbums,
@@ -262,6 +348,67 @@ class _AudioHomePageState extends State<AudioHomePage> {
       byLocation[album.location] = album;
     }
     return byLocation.values.toList();
+  }
+
+  List<AlbumInfo> _sortAlbumsByArtist(List<AlbumInfo> albums) {
+    final sortedAlbums = [...albums];
+    sortedAlbums.sort((left, right) {
+      final artistCompare = _sortText(
+        left.artist,
+      ).compareTo(_sortText(right.artist));
+      if (artistCompare != 0) {
+        return artistCompare;
+      }
+
+      final titleCompare = _sortText(
+        left.title,
+      ).compareTo(_sortText(right.title));
+      if (titleCompare != 0) {
+        return titleCompare;
+      }
+
+      return _sortText(left.location).compareTo(_sortText(right.location));
+    });
+    return sortedAlbums;
+  }
+
+  String _sortText(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'n/a') {
+      return '\uFFFF';
+    }
+    return normalized;
+  }
+
+  List<String> _shiftedAlbumLocations({
+    required List<AlbumInfo> currentAlbums,
+    required List<AlbumInfo> nextAlbums,
+  }) {
+    final currentIndexes = <String, int>{
+      for (var i = 0; i < currentAlbums.length; i += 1)
+        currentAlbums[i].location: i,
+    };
+
+    final shiftedLocations = <String>[];
+    for (var i = 0; i < nextAlbums.length; i += 1) {
+      final oldIndex = currentIndexes[nextAlbums[i].location];
+      if (oldIndex != null && oldIndex != i) {
+        shiftedLocations.add(nextAlbums[i].location);
+      }
+    }
+    return shiftedLocations;
+  }
+
+  List<String> _affectedAlbumLocations({
+    required List<AlbumInfo> sortedAlbums,
+    required List<String> newAlbumLocations,
+    required List<String> shiftedAlbumLocations,
+  }) {
+    final affectedLocations = {...newAlbumLocations, ...shiftedAlbumLocations};
+    return [
+      for (final album in sortedAlbums)
+        if (affectedLocations.contains(album.location)) album.location,
+    ];
   }
 
   AlbumInfo? _findUpdatedBrowsingAlbum(
@@ -430,6 +577,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       return LibraryView(
         key: const ValueKey('album-grid'),
         albums: _albums,
+        revealingAlbumLocations: _revealingAlbumLocations,
+        fadingAlbumLocations: _fadingAlbumLocations,
         onAlbumSelected: _showAlbum,
       );
     }
@@ -516,7 +665,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
                             fit: StackFit.expand,
                             children: [
                               _buildLibraryContent(),
-                              _TransitionVeil(visible: _libraryVeilVisible),
+                              TransitionVeil(visible: _libraryVeilVisible),
                             ],
                           ),
                         ),
@@ -539,7 +688,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
                         ),
                       ],
                     ),
-              _TransitionVeil(visible: _screenVeilVisible),
+              TransitionVeil(visible: _screenVeilVisible),
             ],
           ),
         ),
@@ -560,40 +709,6 @@ class _AudioHomePageState extends State<AudioHomePage> {
           collection.backgroundBottom,
         ],
         stops: const [0, 0.48, 1],
-      ),
-    );
-  }
-}
-
-class _TransitionVeil extends StatelessWidget {
-  const _TransitionVeil({required this.visible});
-
-  final bool visible;
-
-  @override
-  Widget build(BuildContext context) {
-    final collection =
-        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
-
-    return IgnorePointer(
-      child: AnimatedOpacity(
-        opacity: visible ? 1 : 0,
-        duration: visible
-            ? const Duration(milliseconds: 560)
-            : const Duration(milliseconds: 820),
-        curve: visible ? Curves.easeInOutCubic : Curves.easeOutQuart,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment.topCenter,
-              radius: 1.25,
-              colors: [
-                collection.backgroundMiddle.withValues(alpha: 0.96),
-                collection.backgroundBottom.withValues(alpha: 0.98),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

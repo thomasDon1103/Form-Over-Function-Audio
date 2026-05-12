@@ -10,6 +10,7 @@ class CollectionTheme extends ThemeExtension<CollectionTheme> {
     required this.panelStrong,
     required this.panelBorder,
     required this.glow,
+    required this.vinyl,
   });
 
   final Color backgroundTop;
@@ -19,6 +20,7 @@ class CollectionTheme extends ThemeExtension<CollectionTheme> {
   final Color panelStrong;
   final Color panelBorder;
   final Color glow;
+  final Color vinyl;
 
   @override
   CollectionTheme copyWith({
@@ -29,6 +31,7 @@ class CollectionTheme extends ThemeExtension<CollectionTheme> {
     Color? panelStrong,
     Color? panelBorder,
     Color? glow,
+    Color? vinyl,
   }) {
     return CollectionTheme(
       backgroundTop: backgroundTop ?? this.backgroundTop,
@@ -38,6 +41,7 @@ class CollectionTheme extends ThemeExtension<CollectionTheme> {
       panelStrong: panelStrong ?? this.panelStrong,
       panelBorder: panelBorder ?? this.panelBorder,
       glow: glow ?? this.glow,
+      vinyl: vinyl ?? this.vinyl,
     );
   }
 
@@ -62,6 +66,7 @@ class CollectionTheme extends ThemeExtension<CollectionTheme> {
       panelStrong: Color.lerp(panelStrong, other.panelStrong, t)!,
       panelBorder: Color.lerp(panelBorder, other.panelBorder, t)!,
       glow: Color.lerp(glow, other.glow, t)!,
+      vinyl: Color.lerp(vinyl, other.vinyl, t)!,
     );
   }
 }
@@ -77,6 +82,7 @@ class AppTheme {
     panelStrong: Color(0xf0193156),
     panelBorder: Color(0x6687c8ff),
     glow: Color(0xff45a6ff),
+    vinyl: Color(0xff05070b),
   );
 
   static final ThemeData theme = ThemeData(
