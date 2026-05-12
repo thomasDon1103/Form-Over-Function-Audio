@@ -34,6 +34,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
   List<String> _revealingAlbumLocations = <String>[];
   List<String> _fadingAlbumLocations = <String>[];
   AlbumInfo? _browsingAlbum;
+  Rect? _openingAlbumArtRect;
+  bool _albumDetailVisible = false;
   AlbumInfo? _selectedAlbum;
   TrackInfo? _selectedTrack;
   int? _selectedTrackIndex;
@@ -46,7 +48,6 @@ class _AudioHomePageState extends State<AudioHomePage> {
   bool _isStartingServer = false;
   bool _isRefreshing = false;
   bool _screenVeilVisible = false;
-  bool _libraryVeilVisible = false;
   StreamSubscription<PlayerSnapshot>? _playerSnapshotSubscription;
   StreamSubscription<void>? _playerEndedSubscription;
   StreamSubscription<String>? _playerErrorSubscription;
@@ -122,6 +123,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _revealingAlbumLocations = <String>[];
       _fadingAlbumLocations = <String>[];
       _browsingAlbum = null;
+      _openingAlbumArtRect = null;
+      _albumDetailVisible = false;
       _selectedAlbum = null;
       _selectedTrack = null;
       _selectedTrackIndex = null;
@@ -187,6 +190,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
         _browsingAlbum = null;
+        _openingAlbumArtRect = null;
+        _albumDetailVisible = false;
         _selectedAlbum = null;
         _selectedTrack = null;
         _selectedTrackIndex = null;
@@ -426,20 +431,28 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return null;
   }
 
-  void _showAlbum(AlbumInfo album) {
-    unawaited(
-      _swapLibraryContent(() {
-        _browsingAlbum = album;
-      }),
-    );
+  void _showAlbum(AlbumInfo album, Rect? openingArtRect) {
+    setState(() {
+      _browsingAlbum = album;
+      _openingAlbumArtRect = openingArtRect;
+      _albumDetailVisible = true;
+    });
   }
 
   void _showLibraryGrid() {
-    unawaited(
-      _swapLibraryContent(() {
-        _browsingAlbum = null;
-      }),
-    );
+    setState(() {
+      _albumDetailVisible = false;
+    });
+  }
+
+  void _hideAlbumDetail() {
+    if (_albumDetailVisible) {
+      return;
+    }
+    setState(() {
+      _browsingAlbum = null;
+      _openingAlbumArtRect = null;
+    });
   }
 
   Future<void> _playTrack(AlbumInfo album, TrackInfo track) async {
@@ -573,22 +586,31 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
 
     final browsingAlbum = _browsingAlbum;
-    if (browsingAlbum == null) {
-      return LibraryView(
-        key: const ValueKey('album-grid'),
-        albums: _albums,
-        revealingAlbumLocations: _revealingAlbumLocations,
-        fadingAlbumLocations: _fadingAlbumLocations,
-        onAlbumSelected: _showAlbum,
-      );
-    }
+    final libraryGrid = LibraryView(
+      key: const ValueKey('album-grid'),
+      albums: _albums,
+      revealingAlbumLocations: _revealingAlbumLocations,
+      fadingAlbumLocations: _fadingAlbumLocations,
+      hiddenAlbumLocation: _albumDetailVisible ? browsingAlbum?.location : null,
+      onAlbumSelected: _showAlbum,
+    );
 
-    return AlbumDetailView(
-      key: ValueKey('album-detail-${browsingAlbum.location}'),
-      album: browsingAlbum,
-      selectedTrack: _selectedTrack,
-      onBack: _showLibraryGrid,
-      onTrackSelected: _playTrack,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        libraryGrid,
+        if (browsingAlbum != null)
+          AlbumDetailView(
+            key: ValueKey('album-detail-${browsingAlbum.location}'),
+            album: browsingAlbum,
+            openingArtRect: _openingAlbumArtRect,
+            visible: _albumDetailVisible,
+            selectedTrack: _selectedTrack,
+            onBack: _showLibraryGrid,
+            onDismissed: _hideAlbumDetail,
+            onTrackSelected: _playTrack,
+          ),
+      ],
     );
   }
 
@@ -607,24 +629,6 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
     setState(() {
       _screenVeilVisible = false;
-    });
-  }
-
-  Future<void> _swapLibraryContent(VoidCallback updateContent) async {
-    setState(() {
-      _libraryVeilVisible = true;
-    });
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (!mounted) {
-      return;
-    }
-    setState(updateContent);
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _libraryVeilVisible = false;
     });
   }
 
@@ -660,15 +664,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
                           onRefresh: _refreshLibrary,
                           onDisconnect: _disconnectFromServer,
                         ),
-                        Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              _buildLibraryContent(),
-                              TransitionVeil(visible: _libraryVeilVisible),
-                            ],
-                          ),
-                        ),
+                        Expanded(child: _buildLibraryContent()),
                         PlayerBar(
                           selectedAlbum: _selectedAlbum,
                           selectedTrack: _selectedTrack,

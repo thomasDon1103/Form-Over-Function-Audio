@@ -43,7 +43,7 @@ void main() {
         home: Scaffold(
           body: LibraryView(
             albums: const [album],
-            onAlbumSelected: (album) => tappedAlbum = album,
+            onAlbumSelected: (album, _) => tappedAlbum = album,
           ),
         ),
       ),
@@ -65,8 +65,10 @@ void main() {
         home: Scaffold(
           body: AlbumDetailView(
             album: album,
+            visible: true,
             selectedTrack: null,
             onBack: () => wentBack = true,
+            onDismissed: () {},
             onTrackSelected: (_, track) => tappedTrack = track,
           ),
         ),

@@ -11,7 +11,7 @@ class AlbumCoverTile extends StatefulWidget {
   const AlbumCoverTile({super.key, required this.album, required this.onTap});
 
   final AlbumInfo album;
-  final VoidCallback onTap;
+  final ValueChanged<Rect?> onTap;
 
   @override
   State<AlbumCoverTile> createState() => _AlbumCoverTileState();
@@ -19,6 +19,7 @@ class AlbumCoverTile extends StatefulWidget {
 
 class _AlbumCoverTileState extends State<AlbumCoverTile>
     with SingleTickerProviderStateMixin {
+  final GlobalKey _artKey = GlobalKey();
   late final AnimationController _spinController = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 700),
@@ -57,11 +58,28 @@ class _AlbumCoverTileState extends State<AlbumCoverTile>
     if (!mounted) {
       return;
     }
-    widget.onTap();
+    widget.onTap(_albumArtBounds());
+    if (!mounted) {
+      return;
+    }
     _spinController.value = 0;
     setState(() {
       _selecting = false;
     });
+  }
+
+  Rect? _albumArtBounds() {
+    final context = _artKey.currentContext;
+    if (context == null) {
+      return null;
+    }
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
   }
 
   @override
@@ -139,7 +157,10 @@ class _AlbumCoverTileState extends State<AlbumCoverTile>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
-                      child: AlbumArt(album: widget.album, borderRadius: 0),
+                      child: KeyedSubtree(
+                        key: _artKey,
+                        child: AlbumArt(album: widget.album, borderRadius: 0),
+                      ),
                     ),
                     Padding(
                       padding: const EdgeInsets.all(10),

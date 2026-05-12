@@ -16,12 +16,14 @@ class LibraryView extends StatelessWidget {
     required this.onAlbumSelected,
     this.revealingAlbumLocations = const <String>[],
     this.fadingAlbumLocations = const <String>[],
+    this.hiddenAlbumLocation,
   });
 
   final List<AlbumInfo> albums;
-  final ValueChanged<AlbumInfo> onAlbumSelected;
+  final void Function(AlbumInfo album, Rect? artBounds) onAlbumSelected;
   final List<String> revealingAlbumLocations;
   final List<String> fadingAlbumLocations;
+  final String? hiddenAlbumLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +41,14 @@ class LibraryView extends StatelessWidget {
         final tile = AlbumCoverTile(
           key: ValueKey('album-${album.location}'),
           album: album,
-          onTap: () => onAlbumSelected(album),
+          onTap: (artBounds) => onAlbumSelected(album, artBounds),
+        );
+        final hidden = album.location == hiddenAlbumLocation;
+        final visibleTile = AnimatedOpacity(
+          opacity: hidden ? 0 : 1,
+          duration: const Duration(milliseconds: 420),
+          curve: hidden ? Curves.easeOutCubic : Curves.easeInCubic,
+          child: IgnorePointer(ignoring: hidden, child: tile),
         );
 
         final revealIndex = revealingAlbumLocations.indexOf(album.location);
@@ -47,18 +56,18 @@ class LibraryView extends StatelessWidget {
         if (fadeIndex != -1) {
           return AlbumFadeOut(
             key: ValueKey('album-fade-out-${album.location}'),
-            child: tile,
+            child: visibleTile,
           );
         }
 
         if (revealIndex == -1) {
-          return tile;
+          return visibleTile;
         }
 
         return AlbumReveal(
           key: ValueKey('album-reveal-${album.location}'),
           delay: Duration(milliseconds: revealIndex * 140),
-          child: tile,
+          child: visibleTile,
         );
       },
     );
