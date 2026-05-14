@@ -247,12 +247,6 @@ class _AlbumHeader extends StatelessWidget {
                     style: textTheme.bodyLarge,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    album.location,
-                    style: textTheme.labelMedium,
-                    overflow: TextOverflow.ellipsis,
-                  ),
                 ],
               ),
             );

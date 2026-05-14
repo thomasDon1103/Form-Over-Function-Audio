@@ -20,11 +20,19 @@ class Scrubber extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final timestampStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600);
+
     return Row(
       children: [
         SizedBox(
-          width: 48,
-          child: Text(_formatDuration(position), textAlign: TextAlign.right),
+          width: 58,
+          child: Text(
+            _formatDuration(position),
+            textAlign: TextAlign.right,
+            style: timestampStyle,
+          ),
         ),
         Expanded(
           child: Slider(
@@ -33,7 +41,10 @@ class Scrubber extends StatelessWidget {
             onChanged: enabled ? onSeek : null,
           ),
         ),
-        SizedBox(width: 48, child: Text(_formatDuration(duration))),
+        SizedBox(
+          width: 58,
+          child: Text(_formatDuration(duration), style: timestampStyle),
+        ),
       ],
     );
   }

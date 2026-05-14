@@ -22,21 +22,33 @@ class TransportControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compactButtonStyle = IconButton.styleFrom(
+      minimumSize: const Size.square(50),
+      iconSize: 32,
+    );
+    final primaryButtonStyle = IconButton.styleFrom(
+      minimumSize: const Size.square(58),
+      iconSize: 36,
+    );
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
           onPressed: canPlayPrevious ? onPrevious : null,
+          style: compactButtonStyle,
           icon: const Icon(Icons.skip_previous),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 14),
         IconButton.filled(
           onPressed: canPlayPause ? onPlayPause : null,
+          style: primaryButtonStyle,
           icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 14),
         IconButton(
           onPressed: canPlayNext ? onNext : null,
+          style: compactButtonStyle,
           icon: const Icon(Icons.skip_next),
         ),
       ],

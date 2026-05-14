@@ -15,6 +15,7 @@ class TrackStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     final albumLabel = selectedAlbum == null
         ? null
         : '${selectedAlbum!.artist} | ${selectedAlbum!.title}';
@@ -26,9 +27,15 @@ class TrackStatus extends StatelessWidget {
       children: [
         AnimatedPlayerText(
           text: trackTitle,
-          style: Theme.of(context).textTheme.titleMedium,
+          style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
-        if (albumLabel != null) AnimatedPlayerText(text: albumLabel),
+        Opacity(
+          opacity: albumLabel == null ? 0 : 1,
+          child: AnimatedPlayerText(
+            text: albumLabel ?? ' ',
+            style: textTheme.bodyLarge,
+          ),
+        ),
       ],
     );
   }

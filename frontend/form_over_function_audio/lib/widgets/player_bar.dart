@@ -143,7 +143,7 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
           builder: (context, constraints) {
             final narrow = constraints.maxWidth < 680;
             final screenHeight = MediaQuery.sizeOf(context).height;
-            final collapsedHeight = narrow ? 220.0 : 178.0;
+            final collapsedHeight = narrow ? 236.0 : 194.0;
             final expandedHeight = narrow
                 ? (screenHeight * 0.68).clamp(420.0, 560.0)
                 : (screenHeight * 0.54).clamp(360.0, 460.0);
