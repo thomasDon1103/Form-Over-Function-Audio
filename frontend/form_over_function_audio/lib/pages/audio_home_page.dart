@@ -10,6 +10,7 @@ import '../server_control.dart';
 import '../stream_player.dart';
 import '../widgets/connection_bar.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/library_sidebar.dart';
 import '../widgets/library_view.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/transition_veil.dart';
@@ -31,6 +32,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
   final ServerControl _serverControl = ServerControl();
 
   List<AlbumInfo> _albums = <AlbumInfo>[];
+  List<String> _genres = <String>[];
+  String? _selectedGenreFilter;
   List<String> _revealingAlbumLocations = <String>[];
   List<String> _fadingAlbumLocations = <String>[];
   AlbumInfo? _browsingAlbum;
@@ -48,6 +51,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
   bool _isStartingServer = false;
   bool _isRefreshing = false;
   bool _screenVeilVisible = false;
+  bool _librarySidebarCollapsed = false;
   StreamSubscription<PlayerSnapshot>? _playerSnapshotSubscription;
   StreamSubscription<void>? _playerEndedSubscription;
   StreamSubscription<String>? _playerErrorSubscription;
@@ -120,6 +124,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _status = 'Connecting to $baseUrl...';
       _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
+      _genres = <String>[];
+      _selectedGenreFilter = null;
       _revealingAlbumLocations = <String>[];
       _fadingAlbumLocations = <String>[];
       _browsingAlbum = null;
@@ -152,6 +158,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       final albums = decoded
           .map((value) => AlbumInfo.fromJson(value as Map<String, dynamic>))
           .toList();
+      final genres = await _loadGenres(baseUrl, albums);
 
       if (!mounted) {
         return;
@@ -160,6 +167,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       await _swapScreenContent(() {
         _connectedBaseUrl = baseUrl;
         _albums = _sortAlbumsByArtist(albums);
+        _genres = genres;
+        _selectedGenreFilter = null;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
         _status =
@@ -187,6 +196,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _swapScreenContent(() {
         _connectedBaseUrl = null;
         _albums = <AlbumInfo>[];
+        _genres = <String>[];
+        _selectedGenreFilter = null;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
         _browsingAlbum = null;
@@ -244,6 +255,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       final mergedAlbums = _sortAlbumsByArtist(
         _mergeAlbums(_albums, newAlbums),
       );
+      final nextGenres = _mergeGenres(_genres, _genresFromAlbums(mergedAlbums));
       final newAlbumLocations = newAlbums
           .map((album) => album.location)
           .toList();
@@ -261,6 +273,11 @@ class _AudioHomePageState extends State<AudioHomePage> {
         setState(() {
           _connectedBaseUrl = baseUrl;
           _albums = mergedAlbums;
+          _genres = nextGenres;
+          _selectedGenreFilter = _validGenreFilter(
+            _selectedGenreFilter,
+            nextGenres,
+          );
           _revealingAlbumLocations = <String>[];
           _fadingAlbumLocations = <String>[];
           _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
@@ -287,6 +304,11 @@ class _AudioHomePageState extends State<AudioHomePage> {
       setState(() {
         _connectedBaseUrl = baseUrl;
         _albums = mergedAlbums;
+        _genres = nextGenres;
+        _selectedGenreFilter = _validGenreFilter(
+          _selectedGenreFilter,
+          nextGenres,
+        );
         _revealingAlbumLocations = revealLocations;
         _fadingAlbumLocations = <String>[];
         _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
@@ -377,6 +399,74 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return sortedAlbums;
   }
 
+  Future<List<String>> _loadGenres(
+    String baseUrl,
+    List<AlbumInfo> albums,
+  ) async {
+    final albumGenres = _genresFromAlbums(albums);
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/genres'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        return albumGenres;
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final serverGenres = ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
+          .map((value) => value as String)
+          .toList();
+      return _mergeGenres(albumGenres, serverGenres);
+    } on Object {
+      return albumGenres;
+    }
+  }
+
+  List<String> _genresFromAlbums(List<AlbumInfo> albums) {
+    return _mergeGenres(
+      const <String>[],
+      albums.map((album) => album.genre).toList(),
+    );
+  }
+
+  List<String> _mergeGenres(List<String> left, List<String> right) {
+    final byKey = <String, String>{};
+    for (final genre in [...left, ...right]) {
+      final normalized = genre.trim();
+      if (_isEmptyGenre(normalized)) {
+        continue;
+      }
+      byKey[normalized.toLowerCase()] = normalized;
+    }
+    final genres = byKey.values.toList();
+    genres.sort(
+      (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
+    );
+    return genres;
+  }
+
+  List<String> _removeGenreFromList(List<String> genres, String genre) {
+    return [
+      for (final candidate in genres)
+        if (!_sameGenre(candidate, genre)) candidate,
+    ];
+  }
+
+  String? _validGenreFilter(String? genre, List<String> genres) {
+    if (genre == null) {
+      return null;
+    }
+    return genres.any((candidate) => candidate == genre) ? genre : null;
+  }
+
+  bool _isEmptyGenre(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized.isEmpty || normalized == 'n/a' || normalized == 'no info';
+  }
+
+  bool _sameGenre(String left, String right) {
+    return left.trim().toLowerCase() == right.trim().toLowerCase();
+  }
+
   String _sortText(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.isEmpty || normalized == 'n/a') {
@@ -453,6 +543,233 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _browsingAlbum = null;
       _openingAlbumArtRect = null;
     });
+  }
+
+  void _selectGenreFilter(String? genre) {
+    setState(() {
+      _selectedGenreFilter = genre;
+    });
+  }
+
+  void _toggleLibrarySidebar() {
+    setState(() {
+      _librarySidebarCollapsed = !_librarySidebarCollapsed;
+    });
+  }
+
+  Future<String?> _createGenre() async {
+    var genreInput = '';
+    final genre = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add Genre'),
+          content: TextField(
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Genre name'),
+            onChanged: (value) {
+              genreInput = value;
+            },
+            onSubmitted: (value) => Navigator.of(context).pop(value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(genreInput),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalized = genre?.trim() ?? '';
+    if (_isEmptyGenre(normalized)) {
+      return null;
+    }
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    var nextGenres = _mergeGenres(_genres, [normalized]);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/genres'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'genre': normalized}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        nextGenres = _mergeGenres(
+          nextGenres,
+          ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
+              .map((value) => value as String)
+              .toList(),
+        );
+      }
+    } on Object {
+      // Keep the genre available locally even if the catalog write fails.
+    }
+
+    if (mounted) {
+      setState(() {
+        _genres = nextGenres;
+      });
+    }
+    return normalized;
+  }
+
+  Future<void> _assignAlbumGenre(AlbumInfo album, String genre) async {
+    final normalized = genre.trim();
+    if (_isEmptyGenre(normalized)) {
+      return;
+    }
+
+    final updatedAlbum = album.copyWith(genre: normalized);
+    _applyUpdatedAlbum(updatedAlbum);
+    setState(() {
+      _genres = _mergeGenres(_genres, [normalized]);
+      _status = 'Updating ${albumTitleForStatus(album)} genre...';
+    });
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/album/genre'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'location': album.location, 'genre': normalized}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+
+      final savedAlbum = AlbumInfo.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+      if (!mounted) {
+        return;
+      }
+      _applyUpdatedAlbum(savedAlbum);
+      setState(() {
+        _genres = _mergeGenres(_genres, [savedAlbum.genre]);
+        _selectedGenreFilter = _validGenreFilter(_selectedGenreFilter, _genres);
+        _status = 'Updated ${albumTitleForStatus(savedAlbum)} genre.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Genre saved locally, but server update failed: $error';
+      });
+    }
+  }
+
+  Future<void> _removeSelectedGenre() async {
+    final genre = _selectedGenreFilter;
+    if (genre == null) {
+      return;
+    }
+
+    final locallyUpdatedAlbums = [
+      for (final album in _albums)
+        if (_sameGenre(album.genre, genre))
+          album.copyWith(genre: '')
+        else
+          album,
+    ];
+    _replaceAlbums(locallyUpdatedAlbums);
+    setState(() {
+      _genres = _removeGenreFromList(_genres, genre);
+      _selectedGenreFilter = null;
+      _status = 'Removing $genre from matching albums...';
+    });
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/genres/remove'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'genre': genre}),
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final serverAlbums = ((decoded['albums'] ?? <dynamic>[]) as List<dynamic>)
+          .map((value) => AlbumInfo.fromJson(value as Map<String, dynamic>))
+          .toList();
+      final serverGenres = ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
+          .map((value) => value as String)
+          .toList();
+
+      if (!mounted) {
+        return;
+      }
+      _replaceAlbums(serverAlbums);
+      setState(() {
+        _genres = _mergeGenres(serverGenres, _genresFromAlbums(serverAlbums));
+        _selectedGenreFilter = null;
+        _status = 'Removed $genre.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Genre removed locally, but server update failed: $error';
+      });
+    }
+  }
+
+  void _applyUpdatedAlbum(AlbumInfo updatedAlbum) {
+    if (!mounted) {
+      return;
+    }
+    _replaceAlbums([
+      for (final album in _albums)
+        if (album.location == updatedAlbum.location) updatedAlbum else album,
+    ]);
+  }
+
+  void _replaceAlbums(List<AlbumInfo> albums) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _albums = _sortAlbumsByArtist(albums);
+      _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
+      final selectedAlbumLocation = _selectedAlbum?.location;
+      if (selectedAlbumLocation != null) {
+        _selectedAlbum = _findUpdatedBrowsingAlbum(_selectedAlbum, _albums);
+        final selectedAlbum = _selectedAlbum;
+        if (selectedAlbum != null &&
+            _selectedTrackIndex != null &&
+            _selectedTrackIndex! < selectedAlbum.tracks.length) {
+          _selectedTrack = selectedAlbum.tracks[_selectedTrackIndex!];
+        }
+      }
+    });
+  }
+
+  String albumTitleForStatus(AlbumInfo album) {
+    final title = album.title.trim();
+    if (title.isNotEmpty && title.toLowerCase() != 'n/a') {
+      return title;
+    }
+    return album.location;
   }
 
   Future<void> _playTrack(AlbumInfo album, TrackInfo track) async {
@@ -586,19 +903,26 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
 
     final browsingAlbum = _browsingAlbum;
+    final filteredAlbums = _filteredAlbums;
     final libraryGrid = LibraryView(
       key: const ValueKey('album-grid'),
-      albums: _albums,
+      albums: filteredAlbums,
       revealingAlbumLocations: _revealingAlbumLocations,
       fadingAlbumLocations: _fadingAlbumLocations,
       hiddenAlbumLocation: _albumDetailVisible ? browsingAlbum?.location : null,
       onAlbumSelected: _showAlbum,
     );
 
-    return Stack(
+    final content = Stack(
       fit: StackFit.expand,
       children: [
-        libraryGrid,
+        if (filteredAlbums.isEmpty)
+          EmptyState(
+            key: const ValueKey('filtered-empty-library'),
+            status: 'No albums match this genre.',
+          )
+        else
+          libraryGrid,
         if (browsingAlbum != null)
           AlbumDetailView(
             key: ValueKey('album-detail-${browsingAlbum.location}'),
@@ -606,12 +930,43 @@ class _AudioHomePageState extends State<AudioHomePage> {
             openingArtRect: _openingAlbumArtRect,
             visible: _albumDetailVisible,
             selectedTrack: _selectedTrack,
+            availableGenres: _genres,
             onBack: _showLibraryGrid,
             onDismissed: _hideAlbumDetail,
             onTrackSelected: _playTrack,
+            onGenreSelected: _assignAlbumGenre,
+            onCreateGenre: _createGenre,
           ),
       ],
     );
+
+    return Row(
+      children: [
+        LibrarySidebar(
+          genres: _genres,
+          selectedGenre: _selectedGenreFilter,
+          albumCount: _albums.length,
+          visibleAlbumCount: filteredAlbums.length,
+          onGenreSelected: _selectGenreFilter,
+          onAddGenre: () => unawaited(_createGenre()),
+          onRemoveSelectedGenre: () => unawaited(_removeSelectedGenre()),
+          collapsed: _librarySidebarCollapsed,
+          onToggleCollapsed: _toggleLibrarySidebar,
+        ),
+        Expanded(child: content),
+      ],
+    );
+  }
+
+  List<AlbumInfo> get _filteredAlbums {
+    final selectedGenre = _selectedGenreFilter;
+    if (selectedGenre == null) {
+      return _albums;
+    }
+    return [
+      for (final album in _albums)
+        if (_sameGenre(album.genre, selectedGenre)) album,
+    ];
   }
 
   Future<void> _swapScreenContent(VoidCallback updateContent) async {

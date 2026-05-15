@@ -17,6 +17,9 @@ class AlbumDetailView extends StatefulWidget {
     required this.onBack,
     required this.onDismissed,
     required this.onTrackSelected,
+    required this.availableGenres,
+    required this.onGenreSelected,
+    required this.onCreateGenre,
     this.openingArtRect,
   });
 
@@ -27,6 +30,9 @@ class AlbumDetailView extends StatefulWidget {
   final VoidCallback onBack;
   final VoidCallback onDismissed;
   final void Function(AlbumInfo album, TrackInfo track) onTrackSelected;
+  final List<String> availableGenres;
+  final void Function(AlbumInfo album, String genre) onGenreSelected;
+  final Future<String?> Function() onCreateGenre;
 
   @override
   State<AlbumDetailView> createState() => _AlbumDetailViewState();
@@ -125,6 +131,10 @@ class _AlbumDetailViewState extends State<AlbumDetailView>
                 motion: _motion,
                 pageOpacity: _pageOpacity,
                 onBack: widget.onBack,
+                availableGenres: widget.availableGenres,
+                onGenreSelected: (genre) =>
+                    widget.onGenreSelected(widget.album, genre),
+                onCreateGenre: widget.onCreateGenre,
               ),
               const SizedBox(height: 16),
               FadeTransition(
@@ -166,6 +176,9 @@ class _AlbumHeader extends StatelessWidget {
     required this.motion,
     required this.pageOpacity,
     required this.onBack,
+    required this.availableGenres,
+    required this.onGenreSelected,
+    required this.onCreateGenre,
   });
 
   final AlbumInfo album;
@@ -174,6 +187,9 @@ class _AlbumHeader extends StatelessWidget {
   final Animation<double> motion;
   final Animation<double> pageOpacity;
   final VoidCallback onBack;
+  final List<String> availableGenres;
+  final ValueChanged<String> onGenreSelected;
+  final Future<String?> Function() onCreateGenre;
 
   @override
   Widget build(BuildContext context) {
@@ -237,15 +253,12 @@ class _AlbumHeader extends StatelessWidget {
                     style: textTheme.headlineSmall,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    [
-                      album.artist.isEmpty ? 'N/A' : album.artist,
-                      album.year == 0 ? 'N/A' : album.year.toString(),
-                      album.genre.isEmpty ? 'N/A' : album.genre,
-                    ].join(' | '),
-                    style: textTheme.bodyLarge,
-                    overflow: TextOverflow.ellipsis,
+                  const SizedBox(height: 12),
+                  _AlbumMetadataPanel(
+                    album: album,
+                    availableGenres: availableGenres,
+                    onGenreSelected: onGenreSelected,
+                    onCreateGenre: onCreateGenre,
                   ),
                 ],
               ),
@@ -276,7 +289,10 @@ class _AlbumHeader extends StatelessWidget {
                 art,
                 const SizedBox(width: 24),
                 Expanded(
-                  child: SizedBox(height: coverSize, child: details),
+                  child: SizedBox(
+                    height: coverSize,
+                    child: SingleChildScrollView(child: details),
+                  ),
                 ),
               ],
             );
@@ -285,6 +301,338 @@ class _AlbumHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AlbumMetadataPanel extends StatelessWidget {
+  const _AlbumMetadataPanel({
+    required this.album,
+    required this.availableGenres,
+    required this.onGenreSelected,
+    required this.onCreateGenre,
+  });
+
+  final AlbumInfo album;
+  final List<String> availableGenres;
+  final ValueChanged<String> onGenreSelected;
+  final Future<String?> Function() onCreateGenre;
+
+  @override
+  Widget build(BuildContext context) {
+    final tracks = album.tracks;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _MetadataSection(
+          title: 'Album',
+          items: [
+            _MetadataItemData('Title', _metadataText(album.title)),
+            _MetadataItemData('Artist', _metadataText(album.artist)),
+            _MetadataItemData(
+              'Year',
+              album.year == 0 ? noInfo : '${album.year}',
+            ),
+            _MetadataItemData(
+              'Tracks',
+              tracks.isEmpty ? noInfo : '${tracks.length}',
+            ),
+            _MetadataItemData('Artwork', _metadataText(album.mimeType)),
+          ],
+          trailing: _GenreMetadataControl(
+            genre: _metadataText(album.genre),
+            availableGenres: availableGenres,
+            onGenreSelected: onGenreSelected,
+            onCreateGenre: onCreateGenre,
+          ),
+        ),
+        const SizedBox(height: 14),
+        _MetadataSection(
+          title: 'Files',
+          items: [
+            _MetadataItemData(
+              'Formats',
+              _joinedInfo(_uniqueTrackValues(tracks, (track) => track.format)),
+            ),
+            _MetadataItemData('Bitrate', _bitrateSummary(tracks)),
+            _MetadataItemData(
+              'MIME',
+              _joinedInfo(
+                _uniqueTrackValues(tracks, (track) => track.mimeType),
+              ),
+            ),
+            _MetadataItemData('Total Size', _fileSizeSummary(tracks)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _MetadataSection extends StatelessWidget {
+  const _MetadataSection({
+    required this.title,
+    required this.items,
+    this.trailing,
+  });
+
+  final String title;
+  final List<_MetadataItemData> items;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: textTheme.labelLarge?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final item in items)
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: collection.panel.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: collection.panelBorder.withValues(alpha: 0.72),
+                  ),
+                ),
+                child: SizedBox(
+                  width: 132,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: _MetadataItem(item: item),
+                  ),
+                ),
+              ),
+            ?trailing,
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _GenreMetadataControl extends StatelessWidget {
+  const _GenreMetadataControl({
+    required this.genre,
+    required this.availableGenres,
+    required this.onGenreSelected,
+    required this.onCreateGenre,
+  });
+
+  final String genre;
+  final List<String> availableGenres;
+  final ValueChanged<String> onGenreSelected;
+  final Future<String?> Function() onCreateGenre;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    final colorScheme = Theme.of(context).colorScheme;
+    final displayedGenre = genre == noInfo ? noInfo : genre;
+    final genres = [
+      ...availableGenres.where((value) => _metadataText(value) != noInfo),
+    ]..sort((left, right) => left.toLowerCase().compareTo(right.toLowerCase()));
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: collection.panel.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: collection.panelBorder.withValues(alpha: 0.72),
+        ),
+      ),
+      child: SizedBox(
+        width: 166,
+        child: Row(
+          children: [
+            Expanded(
+              child: PopupMenuButton<String>(
+                tooltip: '',
+                enabled: genres.isNotEmpty,
+                onSelected: onGenreSelected,
+                itemBuilder: (context) => [
+                  for (final genre in genres)
+                    PopupMenuItem<String>(value: genre, child: Text(genre)),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Genre',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              displayedGenre,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Icon(
+                            Icons.arrow_drop_down,
+                            color: genres.isEmpty
+                                ? colorScheme.onSurfaceVariant
+                                : colorScheme.primary,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: () async {
+                final newGenre = await onCreateGenre();
+                if (newGenre != null && context.mounted) {
+                  onGenreSelected(newGenre);
+                }
+              },
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MetadataItem extends StatelessWidget {
+  const _MetadataItem({required this.item});
+
+  final _MetadataItemData item;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          item.label,
+          style: textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          item.value,
+          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+}
+
+class _MetadataItemData {
+  const _MetadataItemData(this.label, this.value);
+
+  final String label;
+  final String value;
+}
+
+const noInfo = 'No Info';
+
+String _metadataText(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty || trimmed.toLowerCase() == 'n/a') {
+    return noInfo;
+  }
+  return trimmed;
+}
+
+List<String> _uniqueTrackValues(
+  List<TrackInfo> tracks,
+  String Function(TrackInfo track) readValue,
+) {
+  final values = <String>{};
+  for (final track in tracks) {
+    final value = _metadataText(readValue(track));
+    if (value != noInfo) {
+      values.add(value);
+    }
+  }
+  return values.toList()..sort();
+}
+
+String _joinedInfo(List<String> values) {
+  if (values.isEmpty) {
+    return noInfo;
+  }
+  if (values.length <= 3) {
+    return values.join(', ');
+  }
+  return '${values.take(3).join(', ')} +${values.length - 3}';
+}
+
+String _bitrateSummary(List<TrackInfo> tracks) {
+  final bitrates =
+      tracks
+          .map((track) => track.bitrateKbps)
+          .where((bitrate) => bitrate > 0)
+          .toSet()
+          .toList()
+        ..sort();
+  if (bitrates.isEmpty) {
+    return noInfo;
+  }
+  return bitrates.map((bitrate) => '$bitrate kbps').join(', ');
+}
+
+String _fileSizeSummary(List<TrackInfo> tracks) {
+  final totalBytes = tracks.fold<int>(
+    0,
+    (total, track) => total + math.max(track.fileSizeBytes, 0),
+  );
+  if (totalBytes == 0) {
+    return noInfo;
+  }
+
+  const kb = 1024;
+  const mb = kb * 1024;
+  const gb = mb * 1024;
+  if (totalBytes >= gb) {
+    return '${(totalBytes / gb).toStringAsFixed(2)} GB';
+  }
+  if (totalBytes >= mb) {
+    return '${(totalBytes / mb).toStringAsFixed(1)} MB';
+  }
+  if (totalBytes >= kb) {
+    return '${(totalBytes / kb).toStringAsFixed(1)} KB';
+  }
+  return '$totalBytes B';
 }
 
 class _ZoomingAlbumArt extends StatefulWidget {

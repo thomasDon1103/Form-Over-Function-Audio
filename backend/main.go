@@ -1,23 +1,27 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dhowden/tag"
 )
 
 const (
-	defaultAudioDir = "audio"
-	defaultHost     = "0.0.0.0"
-	defaultPort     = "8080"
+	defaultAudioDir  = "audio"
+	defaultHost      = "0.0.0.0"
+	defaultPort      = "8080"
+	genreCatalogFile = "genreCatalog.json"
 )
 
 var audioDir = getEnv("FOF_AUDIO_DIR", defaultAudioDir)
@@ -268,6 +272,190 @@ func writeAlbumMetadataFile(path string, album AlbumInfo) bool {
 	return true
 }
 
+func genreCatalogPath() string {
+	return filepath.Join(audioDir, genreCatalogFile)
+}
+
+func normalizeGenre(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func genreSortText(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func isKnownEmptyGenre(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "" || normalized == "n/a" || normalized == "no info"
+}
+
+func readGenreCatalog() []string {
+	data, err := os.ReadFile(genreCatalogPath())
+	if err != nil {
+		return nil
+	}
+
+	var genres []string
+	if err := json.Unmarshal(data, &genres); err != nil {
+		log.Printf("readGenreCatalog: could not parse %q: %v", genreCatalogPath(), err)
+		return nil
+	}
+	return genres
+}
+
+func writeGenreCatalog(genres []string) error {
+	data, err := json.MarshalIndent(genres, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(genreCatalogPath(), data, 0644)
+}
+
+func collectGenres() []string {
+	genresByKey := map[string]string{}
+	for _, genre := range readGenreCatalog() {
+		normalized := normalizeGenre(genre)
+		if isKnownEmptyGenre(normalized) {
+			continue
+		}
+		genresByKey[genreSortText(normalized)] = normalized
+	}
+
+	entries, err := os.ReadDir(audioDir)
+	if err != nil {
+		return sortedGenreValues(genresByKey)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metadataPath := filepath.Join(audioDir, entry.Name(), "albumMetadata.json")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue
+		}
+		var album AlbumInfo
+		if err := json.Unmarshal(data, &album); err != nil {
+			continue
+		}
+		normalized := normalizeGenre(album.Genre)
+		if isKnownEmptyGenre(normalized) {
+			continue
+		}
+		genresByKey[genreSortText(normalized)] = normalized
+	}
+
+	return sortedGenreValues(genresByKey)
+}
+
+func sortedGenreValues(genresByKey map[string]string) []string {
+	genres := make([]string, 0, len(genresByKey))
+	for _, genre := range genresByKey {
+		genres = append(genres, genre)
+	}
+	sort.Slice(genres, func(i, j int) bool {
+		return genreSortText(genres[i]) < genreSortText(genres[j])
+	})
+	return genres
+}
+
+func addGenreToCatalog(genre string) ([]string, error) {
+	normalized := normalizeGenre(genre)
+	if isKnownEmptyGenre(normalized) {
+		return nil, fmt.Errorf("genre is required")
+	}
+
+	genresByKey := map[string]string{}
+	for _, existing := range collectGenres() {
+		genresByKey[genreSortText(existing)] = existing
+	}
+	genresByKey[genreSortText(normalized)] = normalized
+	genres := sortedGenreValues(genresByKey)
+	if err := writeGenreCatalog(genres); err != nil {
+		return nil, err
+	}
+	return genres, nil
+}
+
+func removeGenreFromCatalog(genre string) ([]string, error) {
+	normalized := normalizeGenre(genre)
+	if isKnownEmptyGenre(normalized) {
+		return nil, fmt.Errorf("genre is required")
+	}
+
+	genresByKey := map[string]string{}
+	targetKey := genreSortText(normalized)
+	for _, existing := range collectGenres() {
+		if genreSortText(existing) == targetKey {
+			continue
+		}
+		genresByKey[genreSortText(existing)] = existing
+	}
+	genres := sortedGenreValues(genresByKey)
+	if err := writeGenreCatalog(genres); err != nil {
+		return nil, err
+	}
+	return genres, nil
+}
+
+func clearGenreFromAlbums(genre string) error {
+	normalized := normalizeGenre(genre)
+	if isKnownEmptyGenre(normalized) {
+		return fmt.Errorf("genre is required")
+	}
+	targetKey := genreSortText(normalized)
+
+	entries, err := os.ReadDir(audioDir)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		metadataPath := filepath.Join(audioDir, entry.Name(), "albumMetadata.json")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue
+		}
+
+		album := defaultAlbumInfo(entry.Name())
+		if err := json.Unmarshal(data, &album); err != nil {
+			log.Printf("clearGenreFromAlbums: could not parse %q: %v", metadataPath, err)
+			continue
+		}
+		if genreSortText(album.Genre) != targetKey {
+			continue
+		}
+
+		if album.Folder == "" {
+			album.Folder = entry.Name()
+		}
+		if album.Location == "" {
+			album.Location = album.Folder
+		}
+		if album.ArtPath == "" {
+			album.ArtPath = filepath.ToSlash(filepath.Join(album.Location, "albumArt.jpg"))
+		}
+		if album.Title == "" {
+			album.Title = entry.Name()
+		}
+		if album.Artist == "" {
+			album.Artist = "N/A"
+		}
+		album.Genre = ""
+
+		if !writeAlbumMetadataFile(metadataPath, album) {
+			return fmt.Errorf("could not update album metadata for %q", entry.Name())
+		}
+	}
+
+	return nil
+}
+
 // safeAlbumDir validates a user-supplied album folder name and returns
 // the path to that album folder inside audioDir. It rejects path-traversal
 // attempts and any name that doesn't correspond to an existing directory.
@@ -365,37 +553,199 @@ func getAlbumTracks(albumLocation string) []TrackInfo {
 		}
 
 		trackPath := filepath.ToSlash(filepath.Join(albumLocation, file.Name()))
-		tracks = append(tracks, TrackInfo{
-			Title: trackTitleFromMetadata(filepath.Join(albumDir, file.Name()), file.Name()),
-			Path:  trackPath,
-		})
+		tracks = append(tracks, trackInfoFromFile(filepath.Join(albumDir, file.Name()), trackPath, file.Name()))
 	}
 	return tracks
 }
 
-func trackTitleFromMetadata(path string, fileName string) string {
-	fallback := fileNameWithoutExt(fileName)
+func trackInfoFromFile(path string, relativePath string, fileName string) TrackInfo {
+	track := TrackInfo{
+		Title:  fileNameWithoutExt(fileName),
+		Path:   relativePath,
+		Format: formatFromExt(fileName),
+	}
+
+	if contentType, err := contentTypeForAudioPath(relativePath); err == nil {
+		track.MimeType = contentType
+	}
+	if stat, err := os.Stat(path); err == nil {
+		track.FileSizeBytes = stat.Size()
+	}
+	if bitrate, err := audioBitrateKbps(path, relativePath); err == nil && bitrate > 0 {
+		track.BitrateKbps = bitrate
+	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return fallback
+		return track
 	}
 	defer f.Close()
 
 	metadata, err := tag.ReadFrom(f)
 	if err != nil {
-		return fallback
+		return track
 	}
 
-	title := strings.TrimSpace(metadata.Title())
-	if title == "" {
-		return fallback
+	if title := strings.TrimSpace(metadata.Title()); title != "" {
+		track.Title = title
 	}
-	return title
+	if fileType := strings.TrimSpace(string(metadata.FileType())); fileType != "" {
+		track.Format = strings.ToUpper(fileType)
+	}
+	if metadataFormat := strings.TrimSpace(string(metadata.Format())); metadataFormat != "" {
+		track.MetadataFormat = metadataFormat
+	}
+	if artist := strings.TrimSpace(metadata.Artist()); artist != "" {
+		track.Artist = artist
+	}
+	if album := strings.TrimSpace(metadata.Album()); album != "" {
+		track.Album = album
+	}
+	if genre := strings.TrimSpace(metadata.Genre()); genre != "" {
+		track.Genre = genre
+	}
+	if year := metadata.Year(); year != 0 {
+		track.Year = year
+	}
+	if number, total := metadata.Track(); number != 0 || total != 0 {
+		track.TrackNumber = number
+		track.TrackTotal = total
+	}
+	if number, total := metadata.Disc(); number != 0 || total != 0 {
+		track.DiscNumber = number
+		track.DiscTotal = total
+	}
+
+	return track
 }
 
 func fileNameWithoutExt(name string) string {
 	return strings.TrimSuffix(name, filepath.Ext(name))
+}
+
+func formatFromExt(name string) string {
+	ext := strings.TrimPrefix(filepath.Ext(name), ".")
+	if ext == "" {
+		return ""
+	}
+	return strings.ToUpper(ext)
+}
+
+func audioBitrateKbps(path string, relativePath string) (int, error) {
+	switch strings.ToLower(filepath.Ext(relativePath)) {
+	case ".mp3":
+		return mp3BitrateKbps(path)
+	case ".wav":
+		return wavBitrateKbps(path)
+	default:
+		return 0, fmt.Errorf("bitrate unavailable")
+	}
+}
+
+func mp3BitrateKbps(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	data := make([]byte, 64*1024)
+	n, err := file.Read(data)
+	if err != nil && err != io.EOF {
+		return 0, err
+	}
+	data = data[:n]
+
+	for i := 0; i+4 <= len(data); i++ {
+		header := binary.BigEndian.Uint32(data[i : i+4])
+		if header&0xffe00000 != 0xffe00000 {
+			continue
+		}
+
+		versionID := (header >> 19) & 0x3
+		layerIndex := (header >> 17) & 0x3
+		bitrateIndex := (header >> 12) & 0xf
+		if versionID == 1 || layerIndex == 0 || bitrateIndex == 0 || bitrateIndex == 15 {
+			continue
+		}
+
+		bitrate := mp3BitrateFromHeader(versionID, layerIndex, bitrateIndex)
+		if bitrate > 0 {
+			return bitrate, nil
+		}
+	}
+
+	return 0, fmt.Errorf("mp3 bitrate frame not found")
+}
+
+func mp3BitrateFromHeader(versionID uint32, layerIndex uint32, bitrateIndex uint32) int {
+	mpeg1Layer1 := []int{0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448}
+	mpeg1Layer2 := []int{0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384}
+	mpeg1Layer3 := []int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}
+	mpeg2Layer1 := []int{0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256}
+	mpeg2Layer23 := []int{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}
+
+	index := int(bitrateIndex)
+	if versionID == 3 {
+		switch layerIndex {
+		case 3:
+			return mpeg1Layer1[index]
+		case 2:
+			return mpeg1Layer2[index]
+		default:
+			return mpeg1Layer3[index]
+		}
+	}
+
+	if layerIndex == 3 {
+		return mpeg2Layer1[index]
+	}
+	return mpeg2Layer23[index]
+}
+
+func wavBitrateKbps(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	header := make([]byte, 12)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return 0, err
+	}
+	if string(header[0:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
+		return 0, fmt.Errorf("not a wav file")
+	}
+
+	chunkHeader := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(file, chunkHeader); err != nil {
+			return 0, err
+		}
+		chunkID := string(chunkHeader[0:4])
+		chunkSize := int64(binary.LittleEndian.Uint32(chunkHeader[4:8]))
+
+		if chunkID == "fmt " {
+			data := make([]byte, chunkSize)
+			if _, err := io.ReadFull(file, data); err != nil {
+				return 0, err
+			}
+			if len(data) < 12 {
+				return 0, fmt.Errorf("invalid wav fmt chunk")
+			}
+			byteRate := binary.LittleEndian.Uint32(data[8:12])
+			return int((byteRate * 8) / 1000), nil
+		}
+
+		skip := chunkSize
+		if skip%2 == 1 {
+			skip++
+		}
+		if _, err := file.Seek(skip, io.SeekCurrent); err != nil {
+			return 0, err
+		}
+	}
 }
 
 func hydrateAlbumURLs(r *http.Request, album *AlbumInfo) {
@@ -468,6 +818,144 @@ func refreshLibraryHandler(w http.ResponseWriter, r *http.Request) {
 		NewAlbums: newAlbums,
 		Count:     len(newAlbums),
 	})
+}
+
+func genresHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		json.NewEncoder(w).Encode(GenreCatalogResponse{Genres: collectGenres()})
+	case http.MethodPost:
+		var request GenreRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid genre request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		genres, err := addGenreToCatalog(request.Genre)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		json.NewEncoder(w).Encode(GenreCatalogResponse{Genres: genres})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func removeGenreHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request GenreRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid genre request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := clearGenreFromAlbums(request.Genre); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	genres, err := removeGenreFromCatalog(request.Genre)
+	if err != nil {
+		http.Error(w, "could not remove genre: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	library, err := getAlbumLibraryFromMetadata()
+	if err != nil {
+		http.Error(w, "could not refresh library: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hydrateLibraryURLs(r, library)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(GenreRemovalResponse{
+		Genres: genres,
+		Albums: library,
+	})
+}
+
+func updateAlbumGenreHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request UpdateAlbumGenreRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid album genre request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	genre := normalizeGenre(request.Genre)
+	if isKnownEmptyGenre(genre) {
+		http.Error(w, "genre is required", http.StatusBadRequest)
+		return
+	}
+
+	albumDir, relativeLocation, err := safeLibraryPath(request.Location)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(albumDir)
+	if err != nil || !info.IsDir() {
+		http.Error(w, "album folder not found", http.StatusBadRequest)
+		return
+	}
+
+	folder := filepath.Base(albumDir)
+	album := defaultAlbumInfo(folder)
+	metadataPath := filepath.Join(albumDir, "albumMetadata.json")
+	if data, err := os.ReadFile(metadataPath); err == nil {
+		if err := json.Unmarshal(data, &album); err != nil {
+			log.Printf("updateAlbumGenreHandler: could not parse %q: %v", metadataPath, err)
+			album = defaultAlbumInfo(folder)
+		}
+	}
+	album.Folder = folder
+	album.Location = relativeLocation
+	if album.ArtPath == "" {
+		album.ArtPath = filepath.ToSlash(filepath.Join(album.Location, "albumArt.jpg"))
+	}
+	if album.Title == "" {
+		album.Title = folder
+	}
+	if album.Artist == "" {
+		album.Artist = "N/A"
+	}
+	album.Genre = genre
+
+	if _, err := addGenreToCatalog(genre); err != nil {
+		http.Error(w, "could not save genre: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !writeAlbumMetadataFile(metadataPath, album) {
+		http.Error(w, "could not update album metadata", http.StatusInternalServerError)
+		return
+	}
+
+	album.Tracks = getAlbumTracks(album.Location)
+	hydrateAlbumURLs(r, &album)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(album)
 }
 
 // albumArtHandler serves album art from a metadata-provided ?path= value.
@@ -584,6 +1072,9 @@ func main() {
 	mux.HandleFunc("/stream", streamHandler)
 	mux.HandleFunc("/library", libraryHandler)
 	mux.HandleFunc("/refresh", refreshLibraryHandler)
+	mux.HandleFunc("/genres", genresHandler)
+	mux.HandleFunc("/genres/remove", removeGenreHandler)
+	mux.HandleFunc("/album/genre", updateAlbumGenreHandler)
 	mux.HandleFunc("/albumArt", albumArtHandler)
 
 	host := getEnv("FOF_HOST", defaultHost)
@@ -610,9 +1101,22 @@ type AlbumInfo struct {
 }
 
 type TrackInfo struct {
-	Title     string `json:"title"`
-	Path      string `json:"path"`
-	StreamURL string `json:"stream_url,omitempty"`
+	Title          string `json:"title"`
+	Path           string `json:"path"`
+	StreamURL      string `json:"stream_url,omitempty"`
+	Format         string `json:"format,omitempty"`
+	MimeType       string `json:"mime_type,omitempty"`
+	MetadataFormat string `json:"metadata_format,omitempty"`
+	FileSizeBytes  int64  `json:"file_size_bytes,omitempty"`
+	BitrateKbps    int    `json:"bitrate_kbps,omitempty"`
+	Artist         string `json:"artist,omitempty"`
+	Album          string `json:"album,omitempty"`
+	Year           int    `json:"year,omitempty"`
+	Genre          string `json:"genre,omitempty"`
+	TrackNumber    int    `json:"track_number,omitempty"`
+	TrackTotal     int    `json:"track_total,omitempty"`
+	DiscNumber     int    `json:"disc_number,omitempty"`
+	DiscTotal      int    `json:"disc_total,omitempty"`
 }
 
 type ServerInfo struct {
@@ -630,4 +1134,22 @@ type RefreshLibraryRequest struct {
 type RefreshLibraryResponse struct {
 	NewAlbums []AlbumInfo `json:"new_albums"`
 	Count     int         `json:"count"`
+}
+
+type GenreCatalogResponse struct {
+	Genres []string `json:"genres"`
+}
+
+type GenreRemovalResponse struct {
+	Genres []string    `json:"genres"`
+	Albums []AlbumInfo `json:"albums"`
+}
+
+type GenreRequest struct {
+	Genre string `json:"genre"`
+}
+
+type UpdateAlbumGenreRequest struct {
+	Location string `json:"location"`
+	Genre    string `json:"genre"`
 }
