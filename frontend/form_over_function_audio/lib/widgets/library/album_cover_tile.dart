@@ -8,9 +8,15 @@ import 'album_art.dart';
 import 'album_title.dart';
 
 class AlbumCoverTile extends StatefulWidget {
-  const AlbumCoverTile({super.key, required this.album, required this.onTap});
+  const AlbumCoverTile({
+    super.key,
+    required this.album,
+    required this.genreColor,
+    required this.onTap,
+  });
 
   final AlbumInfo album;
+  final Color genreColor;
   final ValueChanged<Rect?> onTap;
 
   @override
@@ -122,9 +128,10 @@ class _AlbumCoverTileState extends State<AlbumCoverTile>
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: _hovered
-                    ? colorScheme.primary.withValues(alpha: 0.62)
-                    : collection.panelBorder,
+                color: widget.genreColor.withValues(
+                  alpha: _hovered ? 0.95 : 0.72,
+                ),
+                width: _hovered ? 1.6 : 1.1,
               ),
               boxShadow: [
                 BoxShadow(
@@ -135,7 +142,7 @@ class _AlbumCoverTileState extends State<AlbumCoverTile>
                   offset: Offset(0, _hovered ? 16 : 9),
                 ),
                 BoxShadow(
-                  color: collection.glow.withValues(
+                  color: widget.genreColor.withValues(
                     alpha: _hovered ? 0.24 : 0.1,
                   ),
                   blurRadius: _hovered ? 30 : 18,

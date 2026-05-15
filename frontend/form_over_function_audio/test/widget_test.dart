@@ -43,6 +43,7 @@ void main() {
         home: Scaffold(
           body: LibraryView(
             albums: const [album],
+            genreColors: const {},
             onAlbumSelected: (album, _) => tappedAlbum = album,
           ),
         ),

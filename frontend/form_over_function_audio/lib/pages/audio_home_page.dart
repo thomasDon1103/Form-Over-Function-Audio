@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_theme.dart';
+import '../genre_color_utils.dart';
 import '../models/album_info.dart';
 import '../server_control.dart';
 import '../stream_player.dart';
@@ -33,6 +34,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   List<AlbumInfo> _albums = <AlbumInfo>[];
   List<String> _genres = <String>[];
+  Map<String, String> _genreColors = <String, String>{};
   String? _selectedGenreFilter;
   List<String> _revealingAlbumLocations = <String>[];
   List<String> _fadingAlbumLocations = <String>[];
@@ -125,6 +127,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
       _genres = <String>[];
+      _genreColors = <String, String>{};
       _selectedGenreFilter = null;
       _revealingAlbumLocations = <String>[];
       _fadingAlbumLocations = <String>[];
@@ -158,7 +161,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       final albums = decoded
           .map((value) => AlbumInfo.fromJson(value as Map<String, dynamic>))
           .toList();
-      final genres = await _loadGenres(baseUrl, albums);
+      final genreCatalog = await _loadGenreCatalog(baseUrl, albums);
 
       if (!mounted) {
         return;
@@ -167,7 +170,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       await _swapScreenContent(() {
         _connectedBaseUrl = baseUrl;
         _albums = _sortAlbumsByArtist(albums);
-        _genres = genres;
+        _genres = genreCatalog.genres;
+        _genreColors = genreCatalog.colors;
         _selectedGenreFilter = null;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
@@ -197,6 +201,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _connectedBaseUrl = null;
         _albums = <AlbumInfo>[];
         _genres = <String>[];
+        _genreColors = <String, String>{};
         _selectedGenreFilter = null;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
@@ -399,7 +404,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return sortedAlbums;
   }
 
-  Future<List<String>> _loadGenres(
+  Future<_GenreCatalog> _loadGenreCatalog(
     String baseUrl,
     List<AlbumInfo> albums,
   ) async {
@@ -409,16 +414,38 @@ class _AudioHomePageState extends State<AudioHomePage> {
           .get(Uri.parse('$baseUrl/genres'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) {
-        return albumGenres;
+        return _GenreCatalog(genres: albumGenres);
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final serverGenres = ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
           .map((value) => value as String)
           .toList();
-      return _mergeGenres(albumGenres, serverGenres);
+      final genres = _mergeGenres(albumGenres, serverGenres);
+      return _GenreCatalog(
+        genres: genres,
+        colors: _genreColorsFromJson(decoded['colors']),
+      );
     } on Object {
-      return albumGenres;
+      return _GenreCatalog(genres: albumGenres);
     }
+  }
+
+  Map<String, String> _genreColorsFromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      return <String, String>{};
+    }
+    final colors = <String, String>{};
+    for (final entry in value.entries) {
+      final color = entry.value;
+      if (color is! String) {
+        continue;
+      }
+      if (genreColorFromHex(color) == null) {
+        continue;
+      }
+      colors[genreKey(entry.key)] = color;
+    }
+    return colors;
   }
 
   List<String> _genresFromAlbums(List<AlbumInfo> albums) {
@@ -449,6 +476,15 @@ class _AudioHomePageState extends State<AudioHomePage> {
       for (final candidate in genres)
         if (!_sameGenre(candidate, genre)) candidate,
     ];
+  }
+
+  Map<String, String> _removeGenreColor(
+    Map<String, String> colors,
+    String genre,
+  ) {
+    final nextColors = {...colors};
+    nextColors.remove(genreKey(genre));
+    return nextColors;
   }
 
   String? _validGenreFilter(String? genre, List<String> genres) {
@@ -557,6 +593,111 @@ class _AudioHomePageState extends State<AudioHomePage> {
     });
   }
 
+  Future<void> _selectGenreColor(String genre) async {
+    final defaultColor = Theme.of(context).colorScheme.primary;
+    final currentColor = genreColorFor(genre, _genreColors, defaultColor);
+    final selectedColor = await showDialog<Color>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Color for $genre'),
+          content: SizedBox(
+            width: 458,
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final color in _genreColorChoices(defaultColor))
+                  _GenreColorChoice(
+                    color: color,
+                    selected: color.toARGB32() == currentColor.toARGB32(),
+                    onTap: () => Navigator.of(context).pop(color),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+    if (selectedColor == null) {
+      return;
+    }
+
+    final hex = genreColorToHex(selectedColor);
+    setState(() {
+      _genreColors = {..._genreColors, genreKey(genre): hex};
+      _status = 'Updating $genre color...';
+    });
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/genres/color'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'genre': genre, 'color': hex}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _genres = _mergeGenres(
+          _genres,
+          ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
+              .map((value) => value as String)
+              .toList(),
+        );
+        _genreColors = {
+          ..._genreColors,
+          ..._genreColorsFromJson(decoded['colors']),
+        };
+        _status = 'Updated $genre color.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Color saved locally, but server update failed: $error';
+      });
+    }
+  }
+
+  List<Color> _genreColorChoices(Color defaultColor) {
+    return [
+      const Color(0xffff6f7d),
+      const Color(0xffd1495b),
+      const Color(0xfff97316),
+      const Color(0xffffb86b),
+      const Color(0xffd6b16d),
+      const Color(0xffffe66d),
+      const Color(0xffa3e635),
+      const Color(0xff7ee787),
+      const Color(0xff63e6be),
+      const Color(0xff72e0ff),
+      defaultColor,
+      const Color(0xff8aa2ff),
+      const Color(0xffb7a6ff),
+      const Color(0xff2b0052),
+      const Color(0xfff78cce),
+      const Color(0xffc8d3f5),
+      const Color(0xff8a94a6),
+      const Color(0xff111827),
+    ];
+  }
+
   Future<String?> _createGenre() async {
     var genreInput = '';
     final genre = await showDialog<String>(
@@ -595,6 +736,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     final baseUrl =
         _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
     var nextGenres = _mergeGenres(_genres, [normalized]);
+    var nextColors = _genreColors;
     try {
       final response = await http
           .post(
@@ -611,6 +753,10 @@ class _AudioHomePageState extends State<AudioHomePage> {
               .map((value) => value as String)
               .toList(),
         );
+        nextColors = {
+          ...nextColors,
+          ..._genreColorsFromJson(decoded['colors']),
+        };
       }
     } on Object {
       // Keep the genre available locally even if the catalog write fails.
@@ -619,6 +765,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     if (mounted) {
       setState(() {
         _genres = nextGenres;
+        _genreColors = nextColors;
       });
     }
     return normalized;
@@ -689,6 +836,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     _replaceAlbums(locallyUpdatedAlbums);
     setState(() {
       _genres = _removeGenreFromList(_genres, genre);
+      _genreColors = _removeGenreColor(_genreColors, genre);
       _selectedGenreFilter = null;
       _status = 'Removing $genre from matching albums...';
     });
@@ -714,6 +862,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       final serverGenres = ((decoded['genres'] ?? <dynamic>[]) as List<dynamic>)
           .map((value) => value as String)
           .toList();
+      final serverColors = _genreColorsFromJson(decoded['colors']);
 
       if (!mounted) {
         return;
@@ -721,6 +870,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _replaceAlbums(serverAlbums);
       setState(() {
         _genres = _mergeGenres(serverGenres, _genresFromAlbums(serverAlbums));
+        _genreColors = serverColors;
         _selectedGenreFilter = null;
         _status = 'Removed $genre.';
       });
@@ -907,6 +1057,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
     final libraryGrid = LibraryView(
       key: const ValueKey('album-grid'),
       albums: filteredAlbums,
+      genreColors: _genreColors,
       revealingAlbumLocations: _revealingAlbumLocations,
       fadingAlbumLocations: _fadingAlbumLocations,
       hiddenAlbumLocation: _albumDetailVisible ? browsingAlbum?.location : null,
@@ -947,7 +1098,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
           selectedGenre: _selectedGenreFilter,
           albumCount: _albums.length,
           visibleAlbumCount: filteredAlbums.length,
+          genreColors: _genreColors,
           onGenreSelected: _selectGenreFilter,
+          onGenreColorSelected: (genre) => unawaited(_selectGenreColor(genre)),
           onAddGenre: () => unawaited(_createGenre()),
           onRemoveSelectedGenre: () => unawaited(_removeSelectedGenre()),
           collapsed: _librarySidebarCollapsed,
@@ -1060,6 +1213,62 @@ class _AudioHomePageState extends State<AudioHomePage> {
           collection.backgroundBottom,
         ],
         stops: const [0, 0.48, 1],
+      ),
+    );
+  }
+}
+
+class _GenreCatalog {
+  const _GenreCatalog({
+    required this.genres,
+    this.colors = const <String, String>{},
+  });
+
+  final List<String> genres;
+  final Map<String, String> colors;
+}
+
+class _GenreColorChoice extends StatelessWidget {
+  const _GenreColorChoice({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? colorScheme.onSurface : collection.panelBorder,
+            width: selected ? 2.4 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: selected ? 0.42 : 0.22),
+              blurRadius: selected ? 18 : 10,
+            ),
+          ],
+        ),
+        child: selected
+            ? Icon(Icons.check, color: colorScheme.surface, size: 20)
+            : null,
       ),
     );
   }

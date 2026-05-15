@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../genre_color_utils.dart';
 
 class LibrarySidebar extends StatelessWidget {
   const LibrarySidebar({
@@ -9,7 +10,9 @@ class LibrarySidebar extends StatelessWidget {
     required this.selectedGenre,
     required this.albumCount,
     required this.visibleAlbumCount,
+    required this.genreColors,
     required this.onGenreSelected,
+    required this.onGenreColorSelected,
     required this.onAddGenre,
     required this.onRemoveSelectedGenre,
     required this.collapsed,
@@ -20,7 +23,9 @@ class LibrarySidebar extends StatelessWidget {
   final String? selectedGenre;
   final int albumCount;
   final int visibleAlbumCount;
+  final Map<String, String> genreColors;
   final ValueChanged<String?> onGenreSelected;
+  final ValueChanged<String> onGenreColorSelected;
   final VoidCallback onAddGenre;
   final VoidCallback onRemoveSelectedGenre;
   final bool collapsed;
@@ -49,7 +54,9 @@ class LibrarySidebar extends StatelessWidget {
                       selectedGenre: selectedGenre,
                       albumCount: albumCount,
                       visibleAlbumCount: visibleAlbumCount,
+                      genreColors: genreColors,
                       onGenreSelected: onGenreSelected,
+                      onGenreColorSelected: onGenreColorSelected,
                       onAddGenre: onAddGenre,
                       onRemoveSelectedGenre: onRemoveSelectedGenre,
                       onToggleCollapsed: onToggleCollapsed,
@@ -69,7 +76,9 @@ class _ExpandedSidebar extends StatelessWidget {
     required this.selectedGenre,
     required this.albumCount,
     required this.visibleAlbumCount,
+    required this.genreColors,
     required this.onGenreSelected,
+    required this.onGenreColorSelected,
     required this.onAddGenre,
     required this.onRemoveSelectedGenre,
     required this.onToggleCollapsed,
@@ -79,7 +88,9 @@ class _ExpandedSidebar extends StatelessWidget {
   final String? selectedGenre;
   final int albumCount;
   final int visibleAlbumCount;
+  final Map<String, String> genreColors;
   final ValueChanged<String?> onGenreSelected;
+  final ValueChanged<String> onGenreColorSelected;
   final VoidCallback onAddGenre;
   final VoidCallback onRemoveSelectedGenre;
   final VoidCallback onToggleCollapsed;
@@ -88,6 +99,7 @@ class _ExpandedSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final collection =
         Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    final defaultGenreColor = Theme.of(context).colorScheme.primary;
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -115,10 +127,25 @@ class _ExpandedSidebar extends StatelessWidget {
               separatorBuilder: (_, _) => const SizedBox(height: 6),
               itemBuilder: (context, index) {
                 final genre = genres[index];
-                return _GenreFilterButton(
-                  label: genre,
-                  selected: selectedGenre == genre,
-                  onTap: () => onGenreSelected(genre),
+                return Row(
+                  children: [
+                    Expanded(
+                      child: _GenreFilterButton(
+                        label: genre,
+                        selected: selectedGenre == genre,
+                        onTap: () => onGenreSelected(genre),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _GenreColorButton(
+                      color: genreColorFor(
+                        genre,
+                        genreColors,
+                        defaultGenreColor,
+                      ),
+                      onTap: () => onGenreColorSelected(genre),
+                    ),
+                  ],
                 );
               },
             ),
@@ -277,6 +304,40 @@ class _SidebarActionButton extends StatelessWidget {
           const SizedBox(width: 8),
           Text(label, textAlign: TextAlign.center),
         ],
+      ),
+    );
+  }
+}
+
+class _GenreColorButton extends StatelessWidget {
+  const _GenreColorButton({required this.color, required this.onTap});
+
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: collection.panelBorder),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.28),
+              blurRadius: 14,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
       ),
     );
   }

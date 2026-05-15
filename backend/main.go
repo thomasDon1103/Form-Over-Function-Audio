@@ -22,6 +22,7 @@ const (
 	defaultHost      = "0.0.0.0"
 	defaultPort      = "8080"
 	genreCatalogFile = "genreCatalog.json"
+	genreColorsFile  = "genreColors.json"
 )
 
 var audioDir = getEnv("FOF_AUDIO_DIR", defaultAudioDir)
@@ -276,6 +277,10 @@ func genreCatalogPath() string {
 	return filepath.Join(audioDir, genreCatalogFile)
 }
 
+func genreColorsPath() string {
+	return filepath.Join(audioDir, genreColorsFile)
+}
+
 func normalizeGenre(value string) string {
 	return strings.TrimSpace(value)
 }
@@ -309,6 +314,92 @@ func writeGenreCatalog(genres []string) error {
 		return err
 	}
 	return os.WriteFile(genreCatalogPath(), data, 0644)
+}
+
+func readGenreColors() map[string]string {
+	data, err := os.ReadFile(genreColorsPath())
+	if err != nil {
+		return map[string]string{}
+	}
+
+	var colors map[string]string
+	if err := json.Unmarshal(data, &colors); err != nil {
+		log.Printf("readGenreColors: could not parse %q: %v", genreColorsPath(), err)
+		return map[string]string{}
+	}
+	return colors
+}
+
+func writeGenreColors(colors map[string]string) error {
+	data, err := json.MarshalIndent(colors, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(genreColorsPath(), data, 0644)
+}
+
+func normalizeColorHex(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimPrefix(trimmed, "#")
+	if len(trimmed) != 6 {
+		return "", fmt.Errorf("color must be a 6-digit hex value")
+	}
+	for _, char := range trimmed {
+		isDigit := char >= '0' && char <= '9'
+		isLowerHex := char >= 'a' && char <= 'f'
+		isUpperHex := char >= 'A' && char <= 'F'
+		if !isDigit && !isLowerHex && !isUpperHex {
+			return "", fmt.Errorf("color must be a 6-digit hex value")
+		}
+	}
+	return "#" + strings.ToUpper(trimmed), nil
+}
+
+func collectGenreColors(genres []string) map[string]string {
+	storedColors := readGenreColors()
+	colorsByKey := map[string]string{}
+	for genre, color := range storedColors {
+		normalizedColor, err := normalizeColorHex(color)
+		if err != nil {
+			continue
+		}
+		colorsByKey[genreSortText(genre)] = normalizedColor
+	}
+
+	colors := map[string]string{}
+	for _, genre := range genres {
+		if color := colorsByKey[genreSortText(genre)]; color != "" {
+			colors[genre] = color
+		}
+	}
+	return colors
+}
+
+func setGenreColor(genre string, color string) (GenreCatalogResponse, error) {
+	normalizedGenre := normalizeGenre(genre)
+	if isKnownEmptyGenre(normalizedGenre) {
+		return GenreCatalogResponse{}, fmt.Errorf("genre is required")
+	}
+	normalizedColor, err := normalizeColorHex(color)
+	if err != nil {
+		return GenreCatalogResponse{}, err
+	}
+
+	genres, err := addGenreToCatalog(normalizedGenre)
+	if err != nil {
+		return GenreCatalogResponse{}, err
+	}
+
+	colors := collectGenreColors(genres)
+	colors[normalizedGenre] = normalizedColor
+	if err := writeGenreColors(colors); err != nil {
+		return GenreCatalogResponse{}, err
+	}
+
+	return GenreCatalogResponse{
+		Genres: genres,
+		Colors: collectGenreColors(genres),
+	}, nil
 }
 
 func collectGenres() []string {
@@ -394,6 +485,10 @@ func removeGenreFromCatalog(genre string) ([]string, error) {
 	}
 	genres := sortedGenreValues(genresByKey)
 	if err := writeGenreCatalog(genres); err != nil {
+		return nil, err
+	}
+	colors := collectGenreColors(genres)
+	if err := writeGenreColors(colors); err != nil {
 		return nil, err
 	}
 	return genres, nil
@@ -823,9 +918,13 @@ func refreshLibraryHandler(w http.ResponseWriter, r *http.Request) {
 func genresHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		genres := collectGenres()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
-		json.NewEncoder(w).Encode(GenreCatalogResponse{Genres: collectGenres()})
+		json.NewEncoder(w).Encode(GenreCatalogResponse{
+			Genres: genres,
+			Colors: collectGenreColors(genres),
+		})
 	case http.MethodPost:
 		var request GenreRequest
 		if r.Body != nil {
@@ -842,10 +941,39 @@ func genresHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
-		json.NewEncoder(w).Encode(GenreCatalogResponse{Genres: genres})
+		json.NewEncoder(w).Encode(GenreCatalogResponse{
+			Genres: genres,
+			Colors: collectGenreColors(genres),
+		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func genreColorHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request GenreColorRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid genre color request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	response, err := setGenreColor(request.Genre, request.Color)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(response)
 }
 
 func removeGenreHandler(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +1012,7 @@ func removeGenreHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	json.NewEncoder(w).Encode(GenreRemovalResponse{
 		Genres: genres,
+		Colors: collectGenreColors(genres),
 		Albums: library,
 	})
 }
@@ -1073,6 +1202,7 @@ func main() {
 	mux.HandleFunc("/library", libraryHandler)
 	mux.HandleFunc("/refresh", refreshLibraryHandler)
 	mux.HandleFunc("/genres", genresHandler)
+	mux.HandleFunc("/genres/color", genreColorHandler)
 	mux.HandleFunc("/genres/remove", removeGenreHandler)
 	mux.HandleFunc("/album/genre", updateAlbumGenreHandler)
 	mux.HandleFunc("/albumArt", albumArtHandler)
@@ -1137,16 +1267,23 @@ type RefreshLibraryResponse struct {
 }
 
 type GenreCatalogResponse struct {
-	Genres []string `json:"genres"`
+	Genres []string          `json:"genres"`
+	Colors map[string]string `json:"colors"`
 }
 
 type GenreRemovalResponse struct {
-	Genres []string    `json:"genres"`
-	Albums []AlbumInfo `json:"albums"`
+	Genres []string          `json:"genres"`
+	Colors map[string]string `json:"colors"`
+	Albums []AlbumInfo       `json:"albums"`
 }
 
 type GenreRequest struct {
 	Genre string `json:"genre"`
+}
+
+type GenreColorRequest struct {
+	Genre string `json:"genre"`
+	Color string `json:"color"`
 }
 
 type UpdateAlbumGenreRequest struct {
