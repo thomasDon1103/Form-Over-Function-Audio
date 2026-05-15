@@ -186,16 +186,16 @@ class _CollapsedSidebar extends StatelessWidget {
         Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
       child: Column(
         children: [
-          Icon(Icons.tune, color: colorScheme.primary),
-          const SizedBox(height: 12),
           _SidebarChromeButton(
             onPressed: onToggleCollapsed,
             icon: const Icon(Icons.chevron_right),
             collection: collection,
           ),
+          const SizedBox(height: 12),
+          Icon(Icons.tune, color: colorScheme.primary),
         ],
       ),
     );
@@ -265,15 +265,22 @@ class _SidebarChromeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return IconButton.filledTonal(
-      onPressed: onPressed,
-      style: IconButton.styleFrom(
-        backgroundColor: collection.glow.withValues(alpha: 0.18),
-        foregroundColor: colorScheme.primary,
-        hoverColor: collection.glow.withValues(alpha: 0.28),
-        side: BorderSide(color: collection.panelBorder),
+    return SizedBox.square(
+      dimension: 40,
+      child: IconButton.filledTonal(
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          backgroundColor: collection.glow.withValues(alpha: 0.18),
+          foregroundColor: colorScheme.primary,
+          hoverColor: collection.glow.withValues(alpha: 0.28),
+          side: BorderSide(color: collection.panelBorder),
+          fixedSize: const Size.square(40),
+          minimumSize: const Size.square(40),
+          padding: EdgeInsets.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: icon,
       ),
-      icon: icon,
     );
   }
 }

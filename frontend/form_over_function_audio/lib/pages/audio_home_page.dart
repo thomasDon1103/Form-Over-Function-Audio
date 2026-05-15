@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -26,6 +27,8 @@ class AudioHomePage extends StatefulWidget {
 }
 
 class _AudioHomePageState extends State<AudioHomePage> {
+  static const Duration _genreFilterFadeDuration = Duration(milliseconds: 500);
+
   final TextEditingController _serverController = TextEditingController(
     text: 'http://localhost:8080',
   );
@@ -36,6 +39,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
   List<String> _genres = <String>[];
   Map<String, String> _genreColors = <String, String>{};
   String? _selectedGenreFilter;
+  String? _displayedGenreFilter;
+  bool _libraryFilterContentVisible = true;
+  int _genreFilterTransitionId = 0;
   List<String> _revealingAlbumLocations = <String>[];
   List<String> _fadingAlbumLocations = <String>[];
   AlbumInfo? _browsingAlbum;
@@ -129,6 +135,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _genres = <String>[];
       _genreColors = <String, String>{};
       _selectedGenreFilter = null;
+      _displayedGenreFilter = null;
+      _libraryFilterContentVisible = true;
+      _genreFilterTransitionId++;
       _revealingAlbumLocations = <String>[];
       _fadingAlbumLocations = <String>[];
       _browsingAlbum = null;
@@ -173,6 +182,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _genres = genreCatalog.genres;
         _genreColors = genreCatalog.colors;
         _selectedGenreFilter = null;
+        _displayedGenreFilter = null;
+        _libraryFilterContentVisible = true;
+        _genreFilterTransitionId++;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
         _status =
@@ -203,6 +215,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _genres = <String>[];
         _genreColors = <String, String>{};
         _selectedGenreFilter = null;
+        _displayedGenreFilter = null;
+        _libraryFilterContentVisible = true;
+        _genreFilterTransitionId++;
         _revealingAlbumLocations = <String>[];
         _fadingAlbumLocations = <String>[];
         _browsingAlbum = null;
@@ -276,13 +291,17 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
       if (newAlbums.isEmpty) {
         setState(() {
-          _connectedBaseUrl = baseUrl;
-          _albums = mergedAlbums;
-          _genres = nextGenres;
-          _selectedGenreFilter = _validGenreFilter(
+          final validFilter = _validGenreFilter(
             _selectedGenreFilter,
             nextGenres,
           );
+          _connectedBaseUrl = baseUrl;
+          _albums = mergedAlbums;
+          _genres = nextGenres;
+          _selectedGenreFilter = validFilter;
+          _displayedGenreFilter = validFilter;
+          _libraryFilterContentVisible = true;
+          _genreFilterTransitionId++;
           _revealingAlbumLocations = <String>[];
           _fadingAlbumLocations = <String>[];
           _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
@@ -307,13 +326,14 @@ class _AudioHomePageState extends State<AudioHomePage> {
       }
 
       setState(() {
+        final validFilter = _validGenreFilter(_selectedGenreFilter, nextGenres);
         _connectedBaseUrl = baseUrl;
         _albums = mergedAlbums;
         _genres = nextGenres;
-        _selectedGenreFilter = _validGenreFilter(
-          _selectedGenreFilter,
-          nextGenres,
-        );
+        _selectedGenreFilter = validFilter;
+        _displayedGenreFilter = validFilter;
+        _libraryFilterContentVisible = true;
+        _genreFilterTransitionId++;
         _revealingAlbumLocations = revealLocations;
         _fadingAlbumLocations = <String>[];
         _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
@@ -582,9 +602,27 @@ class _AudioHomePageState extends State<AudioHomePage> {
   }
 
   void _selectGenreFilter(String? genre) {
+    if (_selectedGenreFilter == genre && _displayedGenreFilter == genre) {
+      return;
+    }
+
+    final transitionId = ++_genreFilterTransitionId;
     setState(() {
       _selectedGenreFilter = genre;
+      _libraryFilterContentVisible = false;
     });
+
+    unawaited(
+      Future<void>.delayed(_genreFilterFadeDuration, () {
+        if (!mounted || transitionId != _genreFilterTransitionId) {
+          return;
+        }
+        setState(() {
+          _displayedGenreFilter = genre;
+          _libraryFilterContentVisible = true;
+        });
+      }),
+    );
   }
 
   void _toggleLibrarySidebar() {
@@ -677,24 +715,24 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   List<Color> _genreColorChoices(Color defaultColor) {
     return [
-      const Color(0xffff6f7d),
+      const Color(0xffff9aa6),
       const Color(0xffd1495b),
       const Color(0xfff97316),
       const Color(0xffffb86b),
       const Color(0xffd6b16d),
       const Color(0xffffe66d),
-      const Color(0xffa3e635),
-      const Color(0xff7ee787),
-      const Color(0xff63e6be),
+      const Color(0xff84cc16),
+      const Color(0xff34d399),
+      const Color(0xff2dd4bf),
       const Color(0xff72e0ff),
       defaultColor,
-      const Color(0xff8aa2ff),
-      const Color(0xffb7a6ff),
-      const Color(0xff2b0052),
+      const Color(0xffa9beff),
+      const Color(0xffd0c7ff),
+      const Color(0xff5b21b6),
       const Color(0xfff78cce),
-      const Color(0xffc8d3f5),
-      const Color(0xff8a94a6),
-      const Color(0xff111827),
+      const Color(0xffffffff),
+      const Color(0xff8f9092),
+      const Color(0xff050505),
     ];
   }
 
@@ -806,8 +844,13 @@ class _AudioHomePageState extends State<AudioHomePage> {
       }
       _applyUpdatedAlbum(savedAlbum);
       setState(() {
-        _genres = _mergeGenres(_genres, [savedAlbum.genre]);
-        _selectedGenreFilter = _validGenreFilter(_selectedGenreFilter, _genres);
+        final nextGenres = _mergeGenres(_genres, [savedAlbum.genre]);
+        final validFilter = _validGenreFilter(_selectedGenreFilter, nextGenres);
+        _genres = nextGenres;
+        _selectedGenreFilter = validFilter;
+        _displayedGenreFilter = validFilter;
+        _libraryFilterContentVisible = true;
+        _genreFilterTransitionId++;
         _status = 'Updated ${albumTitleForStatus(savedAlbum)} genre.';
       });
     } on Object catch (error) {
@@ -838,6 +881,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _genres = _removeGenreFromList(_genres, genre);
       _genreColors = _removeGenreColor(_genreColors, genre);
       _selectedGenreFilter = null;
+      _displayedGenreFilter = null;
+      _libraryFilterContentVisible = true;
+      _genreFilterTransitionId++;
       _status = 'Removing $genre from matching albums...';
     });
 
@@ -872,6 +918,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _genres = _mergeGenres(serverGenres, _genresFromAlbums(serverAlbums));
         _genreColors = serverColors;
         _selectedGenreFilter = null;
+        _displayedGenreFilter = null;
+        _libraryFilterContentVisible = true;
+        _genreFilterTransitionId++;
         _status = 'Removed $genre.';
       });
     } on Object catch (error) {
@@ -1053,7 +1102,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
 
     final browsingAlbum = _browsingAlbum;
-    final filteredAlbums = _filteredAlbums;
+    final filteredAlbums = _displayedFilteredAlbums;
+    final selectedFilteredAlbums = _selectedFilteredAlbums;
     final libraryGrid = LibraryView(
       key: const ValueKey('album-grid'),
       albums: filteredAlbums,
@@ -1063,17 +1113,27 @@ class _AudioHomePageState extends State<AudioHomePage> {
       hiddenAlbumLocation: _albumDetailVisible ? browsingAlbum?.location : null,
       onAlbumSelected: _showAlbum,
     );
+    final librarySurface = AnimatedOpacity(
+      opacity: _libraryFilterContentVisible ? 1 : 0,
+      duration: _genreFilterFadeDuration,
+      curve: _libraryFilterContentVisible
+          ? Curves.easeOutCubic
+          : Curves.easeInCubic,
+      child: IgnorePointer(
+        ignoring: !_libraryFilterContentVisible,
+        child: filteredAlbums.isEmpty
+            ? EmptyState(
+                key: const ValueKey('filtered-empty-library'),
+                status: 'No albums match this genre.',
+              )
+            : libraryGrid,
+      ),
+    );
 
     final content = Stack(
       fit: StackFit.expand,
       children: [
-        if (filteredAlbums.isEmpty)
-          EmptyState(
-            key: const ValueKey('filtered-empty-library'),
-            status: 'No albums match this genre.',
-          )
-        else
-          libraryGrid,
+        librarySurface,
         if (browsingAlbum != null)
           AlbumDetailView(
             key: ValueKey('album-detail-${browsingAlbum.location}'),
@@ -1097,7 +1157,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
           genres: _genres,
           selectedGenre: _selectedGenreFilter,
           albumCount: _albums.length,
-          visibleAlbumCount: filteredAlbums.length,
+          visibleAlbumCount: selectedFilteredAlbums.length,
           genreColors: _genreColors,
           onGenreSelected: _selectGenreFilter,
           onGenreColorSelected: (genre) => unawaited(_selectGenreColor(genre)),
@@ -1111,14 +1171,21 @@ class _AudioHomePageState extends State<AudioHomePage> {
     );
   }
 
-  List<AlbumInfo> get _filteredAlbums {
-    final selectedGenre = _selectedGenreFilter;
-    if (selectedGenre == null) {
+  List<AlbumInfo> get _selectedFilteredAlbums {
+    return _albumsForGenre(_selectedGenreFilter);
+  }
+
+  List<AlbumInfo> get _displayedFilteredAlbums {
+    return _albumsForGenre(_displayedGenreFilter);
+  }
+
+  List<AlbumInfo> _albumsForGenre(String? genre) {
+    if (genre == null) {
       return _albums;
     }
     return [
       for (final album in _albums)
-        if (_sameGenre(album.genre, selectedGenre)) album,
+        if (_sameGenre(album.genre, genre)) album,
     ];
   }
 
@@ -1142,62 +1209,322 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final connectedBaseUrl = _connectedBaseUrl;
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      body: SafeArea(
-        child: DecoratedBox(
-          decoration: _appBackground(context),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              connectedBaseUrl == null
-                  ? ConnectionScreen(
-                      key: const ValueKey('connection-screen'),
-                      controller: _serverController,
-                      status: _status,
-                      isLoading: _isLoading,
-                      isStartingServer: _isStartingServer,
-                      canStartServer: _serverControl.canStartServer,
-                      onConnect: _connectToServer,
-                      onStartServer: _startLocalServer,
-                    )
-                  : Column(
-                      key: const ValueKey('library-shell'),
-                      children: [
-                        LibraryToolbar(
-                          connectedBaseUrl: connectedBaseUrl,
-                          isRefreshing: _isRefreshing,
-                          onRefresh: _refreshLibrary,
-                          onDisconnect: _disconnectFromServer,
-                        ),
-                        Expanded(child: _buildLibraryContent()),
-                        PlayerBar(
-                          selectedAlbum: _selectedAlbum,
-                          selectedTrack: _selectedTrack,
-                          position: _position,
-                          duration: _duration,
-                          isPlaying: _isPlaying,
-                          canPlayPause: _selectedTrack != null,
-                          canPlayPrevious: _hasPreviousTrack,
-                          canPlayNext: _hasNextTrack,
-                          status: _status,
-                          supportsInlinePlayback:
-                              _player.supportsInlinePlayback,
-                          onPlayPause: _togglePlayPause,
-                          onPrevious: _playPreviousTrack,
-                          onNext: _playNextTrack,
-                          onSeek: _seekTo,
-                        ),
-                      ],
-                    ),
-              TransitionVeil(visible: _screenVeilVisible),
-            ],
-          ),
-        ),
+    final theme = _themeForActiveGenre(Theme.of(context));
+    return AnimatedTheme(
+      data: theme,
+      duration: const Duration(milliseconds: 620),
+      curve: Curves.easeInOutCubic,
+      child: Builder(
+        builder: (context) {
+          final colorScheme = Theme.of(context).colorScheme;
+          final connectedBaseUrl = _connectedBaseUrl;
+          return Scaffold(
+            backgroundColor: colorScheme.surface,
+            body: SafeArea(
+              child: DecoratedBox(
+                decoration: _appBackground(context),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    connectedBaseUrl == null
+                        ? ConnectionScreen(
+                            key: const ValueKey('connection-screen'),
+                            controller: _serverController,
+                            status: _status,
+                            isLoading: _isLoading,
+                            isStartingServer: _isStartingServer,
+                            canStartServer: _serverControl.canStartServer,
+                            onConnect: _connectToServer,
+                            onStartServer: _startLocalServer,
+                          )
+                        : Column(
+                            key: const ValueKey('library-shell'),
+                            children: [
+                              LibraryToolbar(
+                                connectedBaseUrl: connectedBaseUrl,
+                                isRefreshing: _isRefreshing,
+                                onRefresh: _refreshLibrary,
+                                onDisconnect: _disconnectFromServer,
+                              ),
+                              Expanded(child: _buildLibraryContent()),
+                              PlayerBar(
+                                selectedAlbum: _selectedAlbum,
+                                selectedTrack: _selectedTrack,
+                                position: _position,
+                                duration: _duration,
+                                isPlaying: _isPlaying,
+                                canPlayPause: _selectedTrack != null,
+                                canPlayPrevious: _hasPreviousTrack,
+                                canPlayNext: _hasNextTrack,
+                                status: _status,
+                                supportsInlinePlayback:
+                                    _player.supportsInlinePlayback,
+                                onPlayPause: _togglePlayPause,
+                                onPrevious: _playPreviousTrack,
+                                onNext: _playNextTrack,
+                                onSeek: _seekTo,
+                              ),
+                            ],
+                          ),
+                    TransitionVeil(visible: _screenVeilVisible),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  ThemeData _themeForActiveGenre(ThemeData baseTheme) {
+    final selectedGenre = _selectedGenreFilter;
+    if (selectedGenre == null) {
+      return baseTheme;
+    }
+
+    final accent = genreColorFor(
+      selectedGenre,
+      _genreColors,
+      baseTheme.colorScheme.primary,
+    );
+    final greenAccent = _isGreenAccent(accent);
+    final blackAccent = _isBlackAccent(accent);
+    final whiteAccent = _isWhiteAccent(accent);
+    final primary = _accentTone(
+      accent,
+      saturation: blackAccent ? 0 : null,
+      lightness: blackAccent
+          ? 0.56
+          : whiteAccent
+          ? 0.90
+          : greenAccent
+          ? 0.64
+          : 0.72,
+    );
+    final secondary = _shiftedAccent(
+      accent,
+      degrees: 18,
+      lightness: blackAccent
+          ? 0.48
+          : whiteAccent
+          ? 0.82
+          : greenAccent
+          ? 0.62
+          : 0.70,
+    );
+    final collection = _collectionForAccent(accent, primary);
+    final primaryContainer = _accentTone(
+      accent,
+      saturation: blackAccent ? 0 : null,
+      lightness: blackAccent
+          ? 0.16
+          : whiteAccent
+          ? 0.42
+          : greenAccent
+          ? 0.24
+          : 0.30,
+    );
+    final secondaryContainer = _shiftedAccent(
+      accent,
+      degrees: 18,
+      lightness: blackAccent
+          ? 0.12
+          : whiteAccent
+          ? 0.34
+          : greenAccent
+          ? 0.22
+          : 0.28,
+    );
+
+    return baseTheme.copyWith(
+      colorScheme: baseTheme.colorScheme.copyWith(
+        primary: primary,
+        onPrimary: _onColor(primary),
+        primaryContainer: primaryContainer,
+        onPrimaryContainer: _onColor(primaryContainer),
+        secondary: secondary,
+        onSecondary: _onColor(secondary),
+        secondaryContainer: secondaryContainer,
+        onSecondaryContainer: _onColor(secondaryContainer),
+        outline: _accentTone(
+          accent,
+          saturation: blackAccent
+              ? 0
+              : greenAccent
+              ? 0.28
+              : 0.32,
+          lightness: blackAccent
+              ? 0.40
+              : whiteAccent
+              ? 0.72
+              : greenAccent
+              ? 0.50
+              : 0.58,
+        ),
+        surfaceContainerHighest: _accentTone(
+          accent,
+          saturation: blackAccent
+              ? 0
+              : greenAccent
+              ? 0.20
+              : 0.24,
+          lightness: blackAccent
+              ? 0.10
+              : whiteAccent
+              ? 0.26
+              : greenAccent
+              ? 0.16
+              : 0.20,
+        ),
+      ),
+      extensions: <ThemeExtension<dynamic>>[collection],
+    );
+  }
+
+  CollectionTheme _collectionForAccent(Color accent, Color primary) {
+    final base = HSLColor.fromColor(accent);
+    final neutral = _isNeutralAccent(accent);
+    final greenAccent = _isGreenAccent(accent);
+    final blackAccent = _isBlackAccent(accent);
+    final whiteAccent = _isWhiteAccent(accent);
+    final toneBase = neutral ? base.withSaturation(0) : base;
+    final double backgroundSaturation = neutral
+        ? 0
+        : greenAccent
+        ? math.max(0.40, math.min(0.86, base.saturation))
+        : math.max(0.48, math.min(1, base.saturation * 1.18));
+    final double panelSaturation = neutral
+        ? 0
+        : greenAccent
+        ? math.max(0.30, math.min(0.76, base.saturation * 0.82))
+        : math.max(0.34, base.saturation);
+
+    return AppTheme.collection.copyWith(
+      backgroundTop: toneBase
+          .withSaturation(backgroundSaturation)
+          .withLightness(
+            neutral
+                ? blackAccent
+                      ? 0.035
+                      : whiteAccent
+                      ? 0.16
+                      : 0.10
+                : greenAccent
+                ? 0.09
+                : 0.12,
+          )
+          .toColor(),
+      backgroundMiddle: toneBase
+          .withSaturation(backgroundSaturation)
+          .withLightness(
+            neutral
+                ? blackAccent
+                      ? 0.075
+                      : whiteAccent
+                      ? 0.28
+                      : 0.18
+                : greenAccent
+                ? 0.19
+                : 0.24,
+          )
+          .toColor(),
+      backgroundBottom: toneBase
+          .withSaturation(backgroundSaturation)
+          .withLightness(
+            blackAccent
+                ? 0.01
+                : whiteAccent
+                ? 0.065
+                : 0.035,
+          )
+          .toColor(),
+      panel: toneBase
+          .withSaturation(panelSaturation)
+          .withLightness(
+            neutral
+                ? blackAccent
+                      ? 0.055
+                      : whiteAccent
+                      ? 0.24
+                      : 0.15
+                : greenAccent
+                ? 0.13
+                : 0.16,
+          )
+          .toColor()
+          .withValues(alpha: 0.86),
+      panelStrong: toneBase
+          .withSaturation(panelSaturation)
+          .withLightness(
+            neutral
+                ? blackAccent
+                      ? 0.09
+                      : whiteAccent
+                      ? 0.31
+                      : 0.19
+                : greenAccent
+                ? 0.17
+                : 0.21,
+          )
+          .toColor()
+          .withValues(alpha: 0.94),
+      panelBorder: primary.withValues(alpha: 0.42),
+      glow: _accentTone(accent, saturation: neutral ? 0 : null),
+    );
+  }
+
+  Color _accentTone(Color color, {double? saturation, double? lightness}) {
+    final hsl = HSLColor.fromColor(color);
+    final neutral = _isNeutralAccent(color);
+    final nextSaturation = saturation ?? (neutral ? 0 : hsl.saturation);
+    final nextLightness = lightness ?? math.max(0.50, hsl.lightness);
+    return hsl
+        .withSaturation(nextSaturation.clamp(0.0, 1.0))
+        .withLightness(nextLightness.clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  Color _shiftedAccent(
+    Color color, {
+    required double degrees,
+    required double lightness,
+  }) {
+    final hsl = HSLColor.fromColor(color);
+    if (_isNeutralAccent(color)) {
+      return _accentTone(color, saturation: 0, lightness: lightness);
+    }
+    return hsl
+        .withHue((hsl.hue + degrees) % 360)
+        .withLightness(lightness)
+        .toColor();
+  }
+
+  bool _isGreenAccent(Color color) {
+    final hue = HSLColor.fromColor(color).hue;
+    return hue >= 75 && hue <= 165;
+  }
+
+  bool _isNeutralAccent(Color color) {
+    return HSLColor.fromColor(color).saturation < 0.08 || _isBlackAccent(color);
+  }
+
+  bool _isBlackAccent(Color color) {
+    final hsl = HSLColor.fromColor(color);
+    final savedSlateBlack =
+        color.toARGB32() == const Color(0xff111827).toARGB32();
+    return savedSlateBlack || (hsl.lightness <= 0.16 && hsl.saturation < 0.45);
+  }
+
+  bool _isWhiteAccent(Color color) {
+    final hsl = HSLColor.fromColor(color);
+    return hsl.lightness >= 0.86 && hsl.saturation < 0.16;
+  }
+
+  Color _onColor(Color color) {
+    return ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+        ? Colors.white
+        : Colors.black;
   }
 
   BoxDecoration _appBackground(BuildContext context) {
