@@ -94,6 +94,15 @@ class ConnectionScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                     FilledButton.tonalIcon(
                       onPressed: busy ? null : onStartServer,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: collection.glow.withValues(
+                          alpha: 0.18,
+                        ),
+                        foregroundColor: colorScheme.primary,
+                        disabledBackgroundColor: collection.panel,
+                        disabledForegroundColor: colorScheme.onSurfaceVariant,
+                        side: BorderSide(color: collection.panelBorder),
+                      ),
                       icon: isStartingServer
                           ? const SizedBox.square(
                               dimension: 18,

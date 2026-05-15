@@ -466,6 +466,8 @@ class _GenreMetadataControl extends StatelessWidget {
               child: PopupMenuButton<String>(
                 tooltip: '',
                 enabled: genres.isNotEmpty,
+                position: PopupMenuPosition.under,
+                offset: const Offset(0, 6),
                 onSelected: onGenreSelected,
                 itemBuilder: (context) => [
                   for (final genre in genres)

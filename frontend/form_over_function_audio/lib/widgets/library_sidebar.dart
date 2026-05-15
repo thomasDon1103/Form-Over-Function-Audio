@@ -39,71 +39,109 @@ class LibrarySidebar extends StatelessWidget {
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
         width: collapsed ? 70 : 288,
-        child: collapsed
-            ? _CollapsedSidebar(onToggleCollapsed: onToggleCollapsed)
-            : Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _SidebarHeader(
-                      visibleAlbumCount: visibleAlbumCount,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final showExpanded = !collapsed && constraints.maxWidth >= 260;
+            return ClipRect(
+              child: showExpanded
+                  ? _ExpandedSidebar(
+                      genres: genres,
+                      selectedGenre: selectedGenre,
                       albumCount: albumCount,
+                      visibleAlbumCount: visibleAlbumCount,
+                      onGenreSelected: onGenreSelected,
+                      onAddGenre: onAddGenre,
+                      onRemoveSelectedGenre: onRemoveSelectedGenre,
                       onToggleCollapsed: onToggleCollapsed,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Genres',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    _GenreFilterButton(
-                      label: 'All Albums',
-                      selected: selectedGenre == null,
-                      onTap: () => onGenreSelected(null),
-                    ),
-                    const SizedBox(height: 6),
-                    Expanded(
-                      child: ListView.separated(
-                        padding: const EdgeInsets.only(right: 18),
-                        itemCount: genres.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 6),
-                        itemBuilder: (context, index) {
-                          final genre = genres[index];
-                          return _GenreFilterButton(
-                            label: genre,
-                            selected: selectedGenre == genre,
-                            onTap: () => onGenreSelected(genre),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _SidebarActionButton(
-                      onPressed: onAddGenre,
-                      icon: Icons.add,
-                      label: 'Add Genre',
-                    ),
-                    const SizedBox(height: 8),
-                    _SidebarActionButton(
-                      onPressed: selectedGenre == null
-                          ? null
-                          : onRemoveSelectedGenre,
-                      icon: Icons.delete_outline,
-                      label: 'Remove Genre',
-                      foregroundColor: Theme.of(context).colorScheme.error,
-                    ),
-                    const SizedBox(height: 14),
-                    Divider(color: collection.panelBorder),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Options',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const Spacer(),
-                  ],
-                ),
-              ),
+                    )
+                  : _CollapsedSidebar(onToggleCollapsed: onToggleCollapsed),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpandedSidebar extends StatelessWidget {
+  const _ExpandedSidebar({
+    required this.genres,
+    required this.selectedGenre,
+    required this.albumCount,
+    required this.visibleAlbumCount,
+    required this.onGenreSelected,
+    required this.onAddGenre,
+    required this.onRemoveSelectedGenre,
+    required this.onToggleCollapsed,
+  });
+
+  final List<String> genres;
+  final String? selectedGenre;
+  final int albumCount;
+  final int visibleAlbumCount;
+  final ValueChanged<String?> onGenreSelected;
+  final VoidCallback onAddGenre;
+  final VoidCallback onRemoveSelectedGenre;
+  final VoidCallback onToggleCollapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SidebarHeader(
+            visibleAlbumCount: visibleAlbumCount,
+            albumCount: albumCount,
+            onToggleCollapsed: onToggleCollapsed,
+          ),
+          const SizedBox(height: 16),
+          Text('Genres', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          _GenreFilterButton(
+            label: 'All Albums',
+            selected: selectedGenre == null,
+            onTap: () => onGenreSelected(null),
+          ),
+          const SizedBox(height: 6),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.only(right: 18),
+              itemCount: genres.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
+              itemBuilder: (context, index) {
+                final genre = genres[index];
+                return _GenreFilterButton(
+                  label: genre,
+                  selected: selectedGenre == genre,
+                  onTap: () => onGenreSelected(genre),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          _SidebarActionButton(
+            onPressed: onAddGenre,
+            icon: Icons.add,
+            label: 'Add Genre',
+          ),
+          const SizedBox(height: 8),
+          _SidebarActionButton(
+            onPressed: selectedGenre == null ? null : onRemoveSelectedGenre,
+            icon: Icons.delete_outline,
+            label: 'Remove Genre',
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
+          const SizedBox(height: 14),
+          Divider(color: collection.panelBorder),
+          const SizedBox(height: 10),
+          Text('Options', style: Theme.of(context).textTheme.titleSmall),
+          const Spacer(),
+        ],
       ),
     );
   }
@@ -117,6 +155,8 @@ class _CollapsedSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
@@ -124,9 +164,10 @@ class _CollapsedSidebar extends StatelessWidget {
         children: [
           Icon(Icons.tune, color: colorScheme.primary),
           const SizedBox(height: 12),
-          IconButton.filledTonal(
+          _SidebarChromeButton(
             onPressed: onToggleCollapsed,
             icon: const Icon(Icons.chevron_right),
+            collection: collection,
           ),
         ],
       ),
@@ -149,6 +190,8 @@ class _SidebarHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -170,11 +213,40 @@ class _SidebarHeader extends StatelessWidget {
             ],
           ),
         ),
-        IconButton(
+        _SidebarChromeButton(
           onPressed: onToggleCollapsed,
           icon: const Icon(Icons.chevron_left),
+          collection: collection,
         ),
       ],
+    );
+  }
+}
+
+class _SidebarChromeButton extends StatelessWidget {
+  const _SidebarChromeButton({
+    required this.onPressed,
+    required this.icon,
+    required this.collection,
+  });
+
+  final VoidCallback onPressed;
+  final Widget icon;
+  final CollectionTheme collection;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return IconButton.filledTonal(
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: collection.glow.withValues(alpha: 0.18),
+        foregroundColor: colorScheme.primary,
+        hoverColor: collection.glow.withValues(alpha: 0.28),
+        side: BorderSide(color: collection.panelBorder),
+      ),
+      icon: icon,
     );
   }
 }
