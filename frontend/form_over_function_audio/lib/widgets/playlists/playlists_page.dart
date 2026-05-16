@@ -108,7 +108,7 @@ class _PlaylistsActions extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 14, 22, 2),
       child: Align(
-        alignment: Alignment.centerRight,
+        alignment: Alignment.centerLeft,
         child: FilledButton.icon(
           onPressed: onCreatePlaylist,
           style: FilledButton.styleFrom(

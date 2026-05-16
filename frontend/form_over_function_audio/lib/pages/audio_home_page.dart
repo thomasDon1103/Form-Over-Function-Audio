@@ -78,6 +78,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
   bool _screenVeilVisible = false;
   bool _librarySidebarCollapsed = false;
   _AppPage _selectedAppPage = _AppPage.library;
+  int _appPageTransitionDirection = 1;
   String? _cachedGenreThemeKey;
   ThemeData? _cachedGenreTheme;
   StreamSubscription<PlayerSnapshot>? _playerSnapshotSubscription;
@@ -176,6 +177,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _duration = Duration.zero;
       _isPlaying = false;
       _selectedAppPage = _AppPage.library;
+      _appPageTransitionDirection = 1;
     });
 
     try {
@@ -267,6 +269,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _isPlaying = false;
         _isRefreshing = false;
         _selectedAppPage = _AppPage.library;
+        _appPageTransitionDirection = 1;
         _status = 'Disconnected.';
       }),
     );
@@ -703,7 +706,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
     if (_selectedAppPage == nextPage) {
       return;
     }
+    final direction = nextPage.index > _selectedAppPage.index ? 1 : -1;
     setState(() {
+      _appPageTransitionDirection = direction;
       _selectedAppPage = nextPage;
       _browsingAlbum = null;
       _openingAlbumArtRect = null;
@@ -2102,6 +2107,37 @@ class _AudioHomePageState extends State<AudioHomePage> {
     };
   }
 
+  Widget _buildAppPageSwitcher() {
+    final pageKey = ValueKey('app-page-${_selectedAppPage.name}');
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 520),
+        reverseDuration: const Duration(milliseconds: 520),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        layoutBuilder: (currentChild, previousChildren) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [...previousChildren, ?currentChild],
+          );
+        },
+        transitionBuilder: (child, animation) {
+          final entering = child.key == pageKey;
+          final direction = _appPageTransitionDirection.toDouble();
+          final begin = Offset(entering ? direction : -direction, 0);
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: begin,
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          );
+        },
+        child: KeyedSubtree(key: pageKey, child: _buildSelectedAppContent()),
+      ),
+    );
+  }
+
   List<AlbumInfo> get _selectedFilteredAlbums {
     return _albumsForGenre(_selectedGenreFilter);
   }
@@ -2193,7 +2229,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
                                 selectedIndex: _selectedAppPage.index,
                                 onSelected: _selectAppPage,
                               ),
-                              Expanded(child: _buildSelectedAppContent()),
+                              Expanded(child: _buildAppPageSwitcher()),
                               PlayerBar(
                                 selectedAlbum: _selectedAlbum,
                                 selectedTrack: _selectedTrack,
