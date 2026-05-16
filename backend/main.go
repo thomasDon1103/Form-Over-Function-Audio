@@ -23,6 +23,7 @@ const (
 	defaultPort      = "8080"
 	genreCatalogFile = "genreCatalog.json"
 	genreColorsFile  = "genreColors.json"
+	playlistsFile    = "playlists.json"
 )
 
 var audioDir = getEnv("FOF_AUDIO_DIR", defaultAudioDir)
@@ -281,6 +282,10 @@ func genreColorsPath() string {
 	return filepath.Join(audioDir, genreColorsFile)
 }
 
+func playlistsPath() string {
+	return filepath.Join(audioDir, playlistsFile)
+}
+
 func normalizeGenre(value string) string {
 	return strings.TrimSpace(value)
 }
@@ -492,6 +497,269 @@ func removeGenreFromCatalog(genre string) ([]string, error) {
 		return nil, err
 	}
 	return genres, nil
+}
+
+func normalizePlaylistName(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func readPlaylists() []PlaylistInfo {
+	data, err := os.ReadFile(playlistsPath())
+	if err != nil {
+		return []PlaylistInfo{}
+	}
+
+	var playlists []PlaylistInfo
+	if err := json.Unmarshal(data, &playlists); err != nil {
+		log.Printf("readPlaylists: could not parse %q: %v", playlistsPath(), err)
+		return []PlaylistInfo{}
+	}
+	return normalizePlaylists(playlists)
+}
+
+func writePlaylists(playlists []PlaylistInfo) error {
+	data, err := json.MarshalIndent(normalizePlaylists(playlists), "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(playlistsPath(), data, 0644)
+}
+
+func normalizePlaylists(playlists []PlaylistInfo) []PlaylistInfo {
+	normalized := make([]PlaylistInfo, 0, len(playlists))
+	seen := map[string]bool{}
+	for _, playlist := range playlists {
+		playlist.Name = normalizePlaylistName(playlist.Name)
+		if playlist.Name == "" {
+			playlist.Name = "Untitled Playlist"
+		}
+		if playlist.ID == "" {
+			playlist.ID = uniquePlaylistID(playlist.Name, seen)
+		}
+		if seen[playlist.ID] {
+			playlist.ID = uniquePlaylistID(playlist.Name, seen)
+		}
+		seen[playlist.ID] = true
+
+		tracks := make([]PlaylistTrackRef, 0, len(playlist.Tracks))
+		trackSeen := map[string]bool{}
+		for _, track := range playlist.Tracks {
+			track.AlbumLocation = filepath.ToSlash(filepath.Clean(filepath.FromSlash(track.AlbumLocation)))
+			track.TrackPath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(track.TrackPath)))
+			if track.AlbumLocation == "." || track.TrackPath == "." {
+				continue
+			}
+			key := playlistTrackKey(track)
+			if trackSeen[key] {
+				continue
+			}
+			trackSeen[key] = true
+			tracks = append(tracks, track)
+		}
+		playlist.Tracks = tracks
+		normalized = append(normalized, playlist)
+	}
+	sort.Slice(normalized, func(i, j int) bool {
+		return strings.ToLower(normalized[i].Name) < strings.ToLower(normalized[j].Name)
+	})
+	return normalized
+}
+
+func uniquePlaylistID(name string, existing map[string]bool) string {
+	base := playlistIDBase(name)
+	if base == "" {
+		base = "playlist"
+	}
+	id := base
+	for suffix := 2; existing[id]; suffix++ {
+		id = fmt.Sprintf("%s-%d", base, suffix)
+	}
+	return id
+}
+
+func playlistIDBase(name string) string {
+	var builder strings.Builder
+	lastWasDash := false
+	for _, char := range strings.ToLower(name) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			builder.WriteRune(char)
+			lastWasDash = false
+			continue
+		}
+		if !lastWasDash {
+			builder.WriteRune('-')
+			lastWasDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func playlistTrackKey(track PlaylistTrackRef) string {
+	return track.AlbumLocation + "::" + track.TrackPath
+}
+
+func createPlaylist(name string) ([]PlaylistInfo, PlaylistInfo, error) {
+	normalizedName := normalizePlaylistName(name)
+	if normalizedName == "" {
+		return nil, PlaylistInfo{}, fmt.Errorf("playlist name is required")
+	}
+
+	playlists := readPlaylists()
+	ids := map[string]bool{}
+	for _, playlist := range playlists {
+		ids[playlist.ID] = true
+	}
+	playlist := PlaylistInfo{
+		ID:     uniquePlaylistID(normalizedName, ids),
+		Name:   normalizedName,
+		Tracks: []PlaylistTrackRef{},
+	}
+	playlists = append(playlists, playlist)
+	if err := writePlaylists(playlists); err != nil {
+		return nil, PlaylistInfo{}, err
+	}
+	return readPlaylists(), playlist, nil
+}
+
+func renamePlaylist(playlistID string, name string) ([]PlaylistInfo, error) {
+	normalizedName := normalizePlaylistName(name)
+	if playlistID == "" {
+		return nil, fmt.Errorf("playlist id is required")
+	}
+	if normalizedName == "" {
+		return nil, fmt.Errorf("playlist name is required")
+	}
+
+	playlists := readPlaylists()
+	found := false
+	for i := range playlists {
+		if playlists[i].ID == playlistID {
+			playlists[i].Name = normalizedName
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("playlist not found")
+	}
+	if err := writePlaylists(playlists); err != nil {
+		return nil, err
+	}
+	return readPlaylists(), nil
+}
+
+func deletePlaylist(playlistID string) ([]PlaylistInfo, error) {
+	if playlistID == "" {
+		return nil, fmt.Errorf("playlist id is required")
+	}
+
+	playlists := readPlaylists()
+	next := make([]PlaylistInfo, 0, len(playlists))
+	found := false
+	for _, playlist := range playlists {
+		if playlist.ID == playlistID {
+			found = true
+			continue
+		}
+		next = append(next, playlist)
+	}
+	if !found {
+		return nil, fmt.Errorf("playlist not found")
+	}
+	if err := writePlaylists(next); err != nil {
+		return nil, err
+	}
+	return readPlaylists(), nil
+}
+
+func addTrackToPlaylist(playlistID string, track PlaylistTrackRef) ([]PlaylistInfo, error) {
+	if playlistID == "" {
+		return nil, fmt.Errorf("playlist id is required")
+	}
+	albumPath, albumLocation, err := safeLibraryPath(track.AlbumLocation)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := os.Stat(albumPath); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("album folder not found")
+	}
+	trackPath, trackRelativePath, err := safeLibraryPath(track.TrackPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := contentTypeForAudioPath(trackRelativePath); err != nil {
+		return nil, err
+	}
+	if info, err := os.Stat(trackPath); err != nil || info.IsDir() {
+		return nil, fmt.Errorf("track not found")
+	}
+	if !strings.HasPrefix(trackRelativePath, albumLocation+"/") {
+		return nil, fmt.Errorf("track is not in album")
+	}
+
+	track.AlbumLocation = albumLocation
+	track.TrackPath = trackRelativePath
+	playlists := readPlaylists()
+	found := false
+	for i := range playlists {
+		if playlists[i].ID != playlistID {
+			continue
+		}
+		found = true
+		key := playlistTrackKey(track)
+		exists := false
+		for _, existing := range playlists[i].Tracks {
+			if playlistTrackKey(existing) == key {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			playlists[i].Tracks = append(playlists[i].Tracks, track)
+		}
+		break
+	}
+	if !found {
+		return nil, fmt.Errorf("playlist not found")
+	}
+	if err := writePlaylists(playlists); err != nil {
+		return nil, err
+	}
+	return readPlaylists(), nil
+}
+
+func removeTrackFromPlaylist(playlistID string, track PlaylistTrackRef) ([]PlaylistInfo, error) {
+	if playlistID == "" {
+		return nil, fmt.Errorf("playlist id is required")
+	}
+	track.AlbumLocation = filepath.ToSlash(filepath.Clean(filepath.FromSlash(track.AlbumLocation)))
+	track.TrackPath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(track.TrackPath)))
+	targetKey := playlistTrackKey(track)
+
+	playlists := readPlaylists()
+	found := false
+	for i := range playlists {
+		if playlists[i].ID != playlistID {
+			continue
+		}
+		found = true
+		nextTracks := make([]PlaylistTrackRef, 0, len(playlists[i].Tracks))
+		for _, existing := range playlists[i].Tracks {
+			if playlistTrackKey(existing) == targetKey {
+				continue
+			}
+			nextTracks = append(nextTracks, existing)
+		}
+		playlists[i].Tracks = nextTracks
+		break
+	}
+	if !found {
+		return nil, fmt.Errorf("playlist not found")
+	}
+	if err := writePlaylists(playlists); err != nil {
+		return nil, err
+	}
+	return readPlaylists(), nil
 }
 
 func clearGenreFromAlbums(genre string) error {
@@ -1087,6 +1355,133 @@ func updateAlbumGenreHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(album)
 }
 
+func playlistsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		json.NewEncoder(w).Encode(PlaylistsResponse{Playlists: readPlaylists()})
+	case http.MethodPost:
+		var request PlaylistNameRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid playlist request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		playlists, playlist, err := createPlaylist(request.Name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		json.NewEncoder(w).Encode(PlaylistMutationResponse{
+			Playlists: playlists,
+			Playlist:  &playlist,
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func renamePlaylistHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request PlaylistNameRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid playlist request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	playlists, err := renamePlaylist(request.PlaylistID, request.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(PlaylistsResponse{Playlists: playlists})
+}
+
+func deletePlaylistHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request PlaylistIDRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid playlist request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	playlists, err := deletePlaylist(request.PlaylistID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(PlaylistsResponse{Playlists: playlists})
+}
+
+func addPlaylistTrackHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request PlaylistTrackRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid playlist track request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	playlists, err := addTrackToPlaylist(request.PlaylistID, request.Track)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(PlaylistsResponse{Playlists: playlists})
+}
+
+func removePlaylistTrackHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request PlaylistTrackRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid playlist track request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	playlists, err := removeTrackFromPlaylist(request.PlaylistID, request.Track)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	json.NewEncoder(w).Encode(PlaylistsResponse{Playlists: playlists})
+}
+
 // albumArtHandler serves album art from a metadata-provided ?path= value.
 // It also supports the older ?folder=AlbumName shape.
 func albumArtHandler(w http.ResponseWriter, r *http.Request) {
@@ -1205,6 +1600,11 @@ func main() {
 	mux.HandleFunc("/genres/color", genreColorHandler)
 	mux.HandleFunc("/genres/remove", removeGenreHandler)
 	mux.HandleFunc("/album/genre", updateAlbumGenreHandler)
+	mux.HandleFunc("/playlists", playlistsHandler)
+	mux.HandleFunc("/playlists/rename", renamePlaylistHandler)
+	mux.HandleFunc("/playlists/delete", deletePlaylistHandler)
+	mux.HandleFunc("/playlists/add-track", addPlaylistTrackHandler)
+	mux.HandleFunc("/playlists/remove-track", removePlaylistTrackHandler)
 	mux.HandleFunc("/albumArt", albumArtHandler)
 
 	host := getEnv("FOF_HOST", defaultHost)
@@ -1289,4 +1689,38 @@ type GenreColorRequest struct {
 type UpdateAlbumGenreRequest struct {
 	Location string `json:"location"`
 	Genre    string `json:"genre"`
+}
+
+type PlaylistInfo struct {
+	ID     string             `json:"id"`
+	Name   string             `json:"name"`
+	Tracks []PlaylistTrackRef `json:"tracks"`
+}
+
+type PlaylistTrackRef struct {
+	AlbumLocation string `json:"album_location"`
+	TrackPath     string `json:"track_path"`
+}
+
+type PlaylistsResponse struct {
+	Playlists []PlaylistInfo `json:"playlists"`
+}
+
+type PlaylistMutationResponse struct {
+	Playlists []PlaylistInfo `json:"playlists"`
+	Playlist  *PlaylistInfo  `json:"playlist,omitempty"`
+}
+
+type PlaylistIDRequest struct {
+	PlaylistID string `json:"playlist_id"`
+}
+
+type PlaylistNameRequest struct {
+	PlaylistID string `json:"playlist_id,omitempty"`
+	Name       string `json:"name"`
+}
+
+type PlaylistTrackRequest struct {
+	PlaylistID string           `json:"playlist_id"`
+	Track      PlaylistTrackRef `json:"track"`
 }

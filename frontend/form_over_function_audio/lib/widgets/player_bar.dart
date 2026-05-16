@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../models/album_info.dart';
+import '../models/playback_queue_item.dart';
 import 'player/player_content.dart';
 import 'player/scrubber.dart';
 import 'player/track_status.dart';
@@ -14,6 +15,7 @@ class PlayerBar extends StatefulWidget {
     super.key,
     required this.selectedAlbum,
     required this.selectedTrack,
+    required this.queue,
     required this.position,
     required this.duration,
     required this.isPlaying,
@@ -25,11 +27,13 @@ class PlayerBar extends StatefulWidget {
     required this.onPlayPause,
     required this.onPrevious,
     required this.onNext,
+    required this.onQueueItemSelected,
     required this.onSeek,
   });
 
   final AlbumInfo? selectedAlbum;
   final TrackInfo? selectedTrack;
+  final List<PlaybackQueueItem> queue;
   final Duration position;
   final Duration duration;
   final bool isPlaying;
@@ -41,6 +45,7 @@ class PlayerBar extends StatefulWidget {
   final VoidCallback onPlayPause;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
+  final ValueChanged<int> onQueueItemSelected;
   final ValueChanged<double> onSeek;
 
   @override
@@ -247,6 +252,9 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                                             trackInfo: trackInfo,
                                             scrubber: scrubber,
                                             transport: transport,
+                                            queue: widget.queue,
+                                            onQueueItemSelected:
+                                                widget.onQueueItemSelected,
                                           ),
                                         ),
                                       ),

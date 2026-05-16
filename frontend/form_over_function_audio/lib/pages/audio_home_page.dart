@@ -8,13 +8,17 @@ import 'package:http/http.dart' as http;
 import '../app_theme.dart';
 import '../genre_color_utils.dart';
 import '../models/album_info.dart';
+import '../models/playback_queue_item.dart';
+import '../models/playlist_info.dart';
 import '../server_control.dart';
 import '../stream_player.dart';
+import '../widgets/app_navbar.dart';
 import '../widgets/connection_bar.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/library_sidebar.dart';
 import '../widgets/library_view.dart';
 import '../widgets/player_bar.dart';
+import '../widgets/playlists/playlists_page.dart';
 import '../widgets/transition_veil.dart';
 
 // Main screen for the audio streamer. This class coordinates server access,
@@ -28,14 +32,23 @@ class AudioHomePage extends StatefulWidget {
 
 class _AudioHomePageState extends State<AudioHomePage> {
   static const Duration _genreFilterFadeDuration = Duration(milliseconds: 500);
+  static const List<AppNavDestination> _appDestinations = [
+    AppNavDestination(label: 'Library', icon: Icons.album),
+    AppNavDestination(label: 'Playlists', icon: Icons.queue_music),
+    AppNavDestination(label: 'Displays', icon: Icons.monitor),
+  ];
 
   final TextEditingController _serverController = TextEditingController(
     text: 'http://localhost:8080',
   );
   final StreamPlayer _player = StreamPlayer();
   final ServerControl _serverControl = ServerControl();
+  final Map<String, _FilteredAlbumCache> _filteredAlbumCache =
+      <String, _FilteredAlbumCache>{};
 
   List<AlbumInfo> _albums = <AlbumInfo>[];
+  int _albumFilterVersion = 0;
+  List<PlaylistInfo> _playlists = <PlaylistInfo>[];
   List<String> _genres = <String>[];
   Map<String, String> _genreColors = <String, String>{};
   String? _selectedGenreFilter;
@@ -47,9 +60,13 @@ class _AudioHomePageState extends State<AudioHomePage> {
   AlbumInfo? _browsingAlbum;
   Rect? _openingAlbumArtRect;
   bool _albumDetailVisible = false;
+  PlaylistInfo? _browsingPlaylist;
   AlbumInfo? _selectedAlbum;
   TrackInfo? _selectedTrack;
   int? _selectedTrackIndex;
+  String? _activePlaylistId;
+  int? _selectedPlaylistTrackIndex;
+  List<PlaybackQueueItem> _songQueue = <PlaybackQueueItem>[];
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
@@ -60,6 +77,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
   bool _isRefreshing = false;
   bool _screenVeilVisible = false;
   bool _librarySidebarCollapsed = false;
+  _AppPage _selectedAppPage = _AppPage.library;
+  String? _cachedGenreThemeKey;
+  ThemeData? _cachedGenreTheme;
   StreamSubscription<PlayerSnapshot>? _playerSnapshotSubscription;
   StreamSubscription<void>? _playerEndedSubscription;
   StreamSubscription<String>? _playerErrorSubscription;
@@ -132,6 +152,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _status = 'Connecting to $baseUrl...';
       _connectedBaseUrl = null;
       _albums = <AlbumInfo>[];
+      _markAlbumsChanged();
+      _playlists = <PlaylistInfo>[];
       _genres = <String>[];
       _genreColors = <String, String>{};
       _selectedGenreFilter = null;
@@ -143,12 +165,17 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _browsingAlbum = null;
       _openingAlbumArtRect = null;
       _albumDetailVisible = false;
+      _browsingPlaylist = null;
       _selectedAlbum = null;
       _selectedTrack = null;
       _selectedTrackIndex = null;
+      _activePlaylistId = null;
+      _selectedPlaylistTrackIndex = null;
+      _songQueue = <PlaybackQueueItem>[];
       _position = Duration.zero;
       _duration = Duration.zero;
       _isPlaying = false;
+      _selectedAppPage = _AppPage.library;
     });
 
     try {
@@ -171,6 +198,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
           .map((value) => AlbumInfo.fromJson(value as Map<String, dynamic>))
           .toList();
       final genreCatalog = await _loadGenreCatalog(baseUrl, albums);
+      final playlists = await _loadPlaylists(baseUrl);
 
       if (!mounted) {
         return;
@@ -179,6 +207,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       await _swapScreenContent(() {
         _connectedBaseUrl = baseUrl;
         _albums = _sortAlbumsByArtist(albums);
+        _markAlbumsChanged();
+        _playlists = playlists;
         _genres = genreCatalog.genres;
         _genreColors = genreCatalog.colors;
         _selectedGenreFilter = null;
@@ -212,6 +242,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _swapScreenContent(() {
         _connectedBaseUrl = null;
         _albums = <AlbumInfo>[];
+        _markAlbumsChanged();
+        _playlists = <PlaylistInfo>[];
         _genres = <String>[];
         _genreColors = <String, String>{};
         _selectedGenreFilter = null;
@@ -223,13 +255,18 @@ class _AudioHomePageState extends State<AudioHomePage> {
         _browsingAlbum = null;
         _openingAlbumArtRect = null;
         _albumDetailVisible = false;
+        _browsingPlaylist = null;
         _selectedAlbum = null;
         _selectedTrack = null;
         _selectedTrackIndex = null;
+        _activePlaylistId = null;
+        _selectedPlaylistTrackIndex = null;
+        _songQueue = <PlaybackQueueItem>[];
         _position = Duration.zero;
         _duration = Duration.zero;
         _isPlaying = false;
         _isRefreshing = false;
+        _selectedAppPage = _AppPage.library;
         _status = 'Disconnected.';
       }),
     );
@@ -297,6 +334,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
           );
           _connectedBaseUrl = baseUrl;
           _albums = mergedAlbums;
+          _markAlbumsChanged();
           _genres = nextGenres;
           _selectedGenreFilter = validFilter;
           _displayedGenreFilter = validFilter;
@@ -329,6 +367,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
         final validFilter = _validGenreFilter(_selectedGenreFilter, nextGenres);
         _connectedBaseUrl = baseUrl;
         _albums = mergedAlbums;
+        _markAlbumsChanged();
         _genres = nextGenres;
         _selectedGenreFilter = validFilter;
         _displayedGenreFilter = validFilter;
@@ -448,6 +487,30 @@ class _AudioHomePageState extends State<AudioHomePage> {
     } on Object {
       return _GenreCatalog(genres: albumGenres);
     }
+  }
+
+  Future<List<PlaylistInfo>> _loadPlaylists(String baseUrl) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/playlists'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        return <PlaylistInfo>[];
+      }
+      return _playlistsFromResponse(response.body);
+    } on Object {
+      return <PlaylistInfo>[];
+    }
+  }
+
+  List<PlaylistInfo> _playlistsFromResponse(String body) {
+    final decoded = jsonDecode(body);
+    final values = decoded is Map<String, dynamic>
+        ? (decoded['playlists'] ?? <dynamic>[]) as List<dynamic>
+        : decoded as List<dynamic>;
+    return values
+        .map((value) => PlaylistInfo.fromJson(value as Map<String, dynamic>))
+        .toList();
   }
 
   Map<String, String> _genreColorsFromJson(Object? value) {
@@ -629,6 +692,355 @@ class _AudioHomePageState extends State<AudioHomePage> {
     setState(() {
       _librarySidebarCollapsed = !_librarySidebarCollapsed;
     });
+  }
+
+  void _selectAppPage(int index) {
+    final pages = _AppPage.values;
+    if (index < 0 || index >= pages.length) {
+      return;
+    }
+    final nextPage = pages[index];
+    if (_selectedAppPage == nextPage) {
+      return;
+    }
+    setState(() {
+      _selectedAppPage = nextPage;
+      _browsingAlbum = null;
+      _openingAlbumArtRect = null;
+      _albumDetailVisible = false;
+    });
+  }
+
+  void _showPlaylist(PlaylistInfo playlist) {
+    setState(() {
+      _browsingPlaylist = playlist;
+    });
+  }
+
+  void _showPlaylistGrid() {
+    setState(() {
+      _browsingPlaylist = null;
+    });
+  }
+
+  Future<String?> _promptForPlaylistName({
+    required String title,
+    String initialName = '',
+  }) async {
+    return showDialog<String>(
+      context: context,
+      builder: (context) =>
+          _PlaylistNameDialog(title: title, initialName: initialName),
+    );
+  }
+
+  Future<PlaylistInfo?> _createPlaylistFromPrompt() async {
+    final name = await _promptForPlaylistName(title: 'New Playlist');
+    if (!mounted || name == null || name.isEmpty) {
+      return null;
+    }
+    return _createPlaylist(name);
+  }
+
+  Future<void> _createPlaylistFromPlaylistsPage() async {
+    final playlist = await _createPlaylistFromPrompt();
+    if (!mounted || playlist == null) {
+      return;
+    }
+    setState(() {
+      _browsingPlaylist = _playlistById(playlist.id) ?? playlist;
+    });
+  }
+
+  Future<PlaylistInfo?> _createPlaylist(String name) async {
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/playlists'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'name': name}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final playlists = _playlistsFromResponse(response.body);
+      final createdJson = decoded['playlist'];
+      final created = createdJson is Map<String, dynamic>
+          ? PlaylistInfo.fromJson(createdJson)
+          : null;
+      if (!mounted) {
+        return created;
+      }
+      setState(() {
+        _replacePlaylists(playlists);
+        _status = 'Created playlist ${created?.name ?? name}.';
+      });
+      return _playlistById(created?.id) ?? created;
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _status = 'Could not create playlist: $error';
+        });
+      }
+      return null;
+    }
+  }
+
+  Future<void> _showSaveTrackToPlaylistDialog(
+    AlbumInfo album,
+    TrackInfo track,
+  ) async {
+    var dialogPlaylists = _playlists;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Add to Playlist'),
+              content: SizedBox(
+                width: 420,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 360),
+                  child: dialogPlaylists.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Create a playlist to save this song.',
+                            style: Theme.of(context).textTheme.bodyLarge,
+                            textAlign: TextAlign.center,
+                          ),
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: dialogPlaylists.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final playlist = dialogPlaylists[index];
+                            return ListTile(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              leading: const Icon(Icons.queue_music),
+                              title: Text(playlist.name),
+                              subtitle: Text(
+                                '${playlist.tracks.length} song${playlist.tracks.length == 1 ? '' : 's'}',
+                              ),
+                              onTap: () async {
+                                await _addTrackToPlaylist(
+                                  playlist,
+                                  album,
+                                  track,
+                                );
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final playlist = await _createPlaylistFromPrompt();
+                    if (playlist == null || !context.mounted) {
+                      return;
+                    }
+                    setDialogState(() {
+                      dialogPlaylists = _playlists;
+                    });
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('New Playlist'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _addTrackToPlaylist(
+    PlaylistInfo playlist,
+    AlbumInfo album,
+    TrackInfo track,
+  ) async {
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/playlists/add-track'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'playlist_id': playlist.id,
+              'track': PlaylistTrackRef.fromTrack(album, track).toJson(),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+      final playlists = _playlistsFromResponse(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _replacePlaylists(playlists);
+        _status = 'Added ${track.title} to ${playlist.name}.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Could not add track to playlist: $error';
+      });
+    }
+  }
+
+  Future<void> _removeTrackFromPlaylist(
+    PlaylistInfo playlist,
+    ResolvedPlaylistTrack item,
+  ) async {
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/playlists/remove-track'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'playlist_id': playlist.id,
+              'track': item.ref.toJson(),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+      final playlists = _playlistsFromResponse(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _replacePlaylists(playlists);
+        _status = 'Removed ${item.track.title} from ${playlist.name}.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Could not remove track from playlist: $error';
+      });
+    }
+  }
+
+  Future<void> _renamePlaylist(PlaylistInfo playlist) async {
+    final name = await _promptForPlaylistName(
+      title: 'Rename Playlist',
+      initialName: playlist.name,
+    );
+    if (!mounted || name == null || name.isEmpty || name == playlist.name) {
+      return;
+    }
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/playlists/rename'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'playlist_id': playlist.id, 'name': name}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+      final playlists = _playlistsFromResponse(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _replacePlaylists(playlists);
+        _status = 'Renamed playlist to $name.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Could not rename playlist: $error';
+      });
+    }
+  }
+
+  Future<void> _deletePlaylist(PlaylistInfo playlist) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete Playlist'),
+          content: Text('Delete ${playlist.name}?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+
+    final baseUrl =
+        _connectedBaseUrl ?? _normalizeBaseUrl(_serverController.text);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/playlists/delete'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'playlist_id': playlist.id}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('Server returned ${response.statusCode}.');
+      }
+      final playlists = _playlistsFromResponse(response.body);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _replacePlaylists(playlists);
+        _status = 'Deleted ${playlist.name}.';
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _status = 'Could not delete playlist: $error';
+      });
+    }
   }
 
   Future<void> _selectGenreColor(String genre) async {
@@ -943,12 +1355,57 @@ class _AudioHomePageState extends State<AudioHomePage> {
     ]);
   }
 
+  void _markAlbumsChanged() {
+    _albumFilterVersion++;
+    _filteredAlbumCache.clear();
+  }
+
+  void _replacePlaylists(List<PlaylistInfo> playlists) {
+    _playlists = playlists;
+    _browsingPlaylist = _playlistById(_browsingPlaylist?.id);
+    final activePlaylist = _playlistById(_activePlaylistId);
+    if (activePlaylist == null) {
+      _activePlaylistId = null;
+      _selectedPlaylistTrackIndex = null;
+      return;
+    }
+
+    final selectedTrack = _selectedTrack;
+    if (selectedTrack == null) {
+      return;
+    }
+    final activeTracks = _resolvedPlaylistTracks(activePlaylist);
+    final activeIndex = activeTracks.indexWhere(
+      (item) => item.track.streamUrl == selectedTrack.streamUrl,
+    );
+    if (activeIndex == -1) {
+      _activePlaylistId = null;
+      _selectedPlaylistTrackIndex = null;
+      return;
+    }
+    _selectedPlaylistTrackIndex = activeIndex;
+  }
+
+  PlaylistInfo? _playlistById(String? playlistId) {
+    if (playlistId == null) {
+      return null;
+    }
+    for (final playlist in _playlists) {
+      if (playlist.id == playlistId) {
+        return playlist;
+      }
+    }
+    return null;
+  }
+
   void _replaceAlbums(List<AlbumInfo> albums) {
     if (!mounted) {
       return;
     }
     setState(() {
       _albums = _sortAlbumsByArtist(albums);
+      _markAlbumsChanged();
+      _songQueue = _updatedQueueForAlbums(_songQueue, _albums);
       _browsingAlbum = _findUpdatedBrowsingAlbum(_browsingAlbum, _albums);
       final selectedAlbumLocation = _selectedAlbum?.location;
       if (selectedAlbumLocation != null) {
@@ -963,6 +1420,49 @@ class _AudioHomePageState extends State<AudioHomePage> {
     });
   }
 
+  List<PlaybackQueueItem> _updatedQueueForAlbums(
+    List<PlaybackQueueItem> queue,
+    List<AlbumInfo> albums,
+  ) {
+    final updatedQueue = <PlaybackQueueItem>[];
+    for (final item in queue) {
+      final updatedItem = _updatedQueueItemForAlbums(item, albums);
+      if (updatedItem != null) {
+        updatedQueue.add(updatedItem);
+      }
+    }
+    return updatedQueue;
+  }
+
+  PlaybackQueueItem? _updatedQueueItemForAlbums(
+    PlaybackQueueItem item,
+    List<AlbumInfo> albums,
+  ) {
+    AlbumInfo? album;
+    for (final candidate in albums) {
+      if (candidate.location == item.album.location) {
+        album = candidate;
+        break;
+      }
+    }
+    if (album == null) {
+      return null;
+    }
+
+    final trackIndex = album.tracks.indexWhere(
+      (track) => track.streamUrl == item.track.streamUrl,
+    );
+    if (trackIndex == -1) {
+      return null;
+    }
+
+    return PlaybackQueueItem(
+      album: album,
+      track: album.tracks[trackIndex],
+      trackIndex: trackIndex,
+    );
+  }
+
   String albumTitleForStatus(AlbumInfo album) {
     final title = album.title.trim();
     if (title.isNotEmpty && title.toLowerCase() != 'n/a') {
@@ -971,14 +1471,271 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return album.location;
   }
 
-  Future<void> _playTrack(AlbumInfo album, TrackInfo track) async {
+  Future<void> _playSelectedTrack(AlbumInfo album, TrackInfo track) async {
+    if (_songQueue.isEmpty) {
+      await _playTrackDirect(album, track, clearQueue: false);
+      return;
+    }
+
+    final action = await _chooseQueuedTrackAction(track);
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case _QueuedTrackAction.playNow:
+        await _playTrackDirect(album, track, clearQueue: true);
+      case _QueuedTrackAction.addToQueue:
+        await _addTrackToQueue(album, track);
+    }
+  }
+
+  Future<_QueuedTrackAction?> _chooseQueuedTrackAction(TrackInfo track) {
+    return showDialog<_QueuedTrackAction>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Queue Active'),
+          content: Text(
+            'Play "${track.title}" now and clear the queue, or add it to the end of the queue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(_QueuedTrackAction.addToQueue),
+              child: const Text('Add to Queue'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(_QueuedTrackAction.playNow),
+              child: const Text('Play Now'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _addTrackToQueue(AlbumInfo album, TrackInfo track) async {
+    final queueItem = _queueItemForTrack(album, track);
+    if (_songQueue.isEmpty) {
+      final currentItem = _isPlaying ? _currentQueueItem() : null;
+      if (currentItem == null) {
+        setState(() {
+          _songQueue = [queueItem];
+          _status = 'Queued ${track.title}.';
+        });
+        await _playQueueHead();
+        return;
+      }
+
+      setState(() {
+        _songQueue = [currentItem, queueItem];
+        _status = 'Added ${track.title} to queue.';
+      });
+      return;
+    }
+
+    setState(() {
+      _songQueue = [..._songQueue, queueItem];
+      _status = 'Added ${track.title} to queue.';
+    });
+  }
+
+  PlaybackQueueItem _queueItemForTrack(AlbumInfo album, TrackInfo track) {
     final trackIndex = album.tracks.indexWhere(
       (candidate) => candidate.streamUrl == track.streamUrl,
     );
+    return PlaybackQueueItem(
+      album: album,
+      track: track,
+      trackIndex: trackIndex == -1 ? null : trackIndex,
+    );
+  }
+
+  List<ResolvedPlaylistTrack> _resolvedPlaylistTracks(PlaylistInfo playlist) {
+    final resolved = <ResolvedPlaylistTrack>[];
+    for (final ref in playlist.tracks) {
+      final album = _albumByLocation(ref.albumLocation);
+      if (album == null) {
+        continue;
+      }
+      final trackIndex = album.tracks.indexWhere(
+        (track) => track.path == ref.trackPath,
+      );
+      if (trackIndex == -1) {
+        continue;
+      }
+      resolved.add(
+        ResolvedPlaylistTrack(
+          ref: ref,
+          album: album,
+          track: album.tracks[trackIndex],
+          trackIndex: trackIndex,
+        ),
+      );
+    }
+    return resolved;
+  }
+
+  AlbumInfo? _albumByLocation(String location) {
+    for (final album in _albums) {
+      if (album.location == location) {
+        return album;
+      }
+    }
+    return null;
+  }
+
+  Map<String, List<AlbumInfo>> _playlistPreviewAlbums() {
+    final previews = <String, List<AlbumInfo>>{};
+    for (final playlist in _playlists) {
+      final albums = <AlbumInfo>[];
+      final seenLocations = <String>{};
+      for (final ref in playlist.tracks) {
+        if (seenLocations.contains(ref.albumLocation)) {
+          continue;
+        }
+        final album = _albumByLocation(ref.albumLocation);
+        if (album == null) {
+          continue;
+        }
+        seenLocations.add(ref.albumLocation);
+        albums.add(album);
+        if (albums.length == 4) {
+          break;
+        }
+      }
+      previews[playlist.id] = albums;
+    }
+    return previews;
+  }
+
+  List<ResolvedPlaylistTrack> _activePlaylistTracks() {
+    final playlist = _playlistById(_activePlaylistId);
+    if (playlist == null) {
+      return const <ResolvedPlaylistTrack>[];
+    }
+    return _resolvedPlaylistTracks(playlist);
+  }
+
+  PlaybackQueueItem? _currentQueueItem() {
+    final album = _selectedAlbum;
+    final track = _selectedTrack;
+    if (album == null || track == null) {
+      return null;
+    }
+    return PlaybackQueueItem(
+      album: album,
+      track: track,
+      trackIndex: _selectedTrackIndex,
+    );
+  }
+
+  Future<void> _playTrackDirect(
+    AlbumInfo album,
+    TrackInfo track, {
+    required bool clearQueue,
+  }) async {
+    final trackIndex = album.tracks.indexWhere(
+      (candidate) => candidate.streamUrl == track.streamUrl,
+    );
+    if (clearQueue) {
+      setState(() {
+        _songQueue = <PlaybackQueueItem>[];
+      });
+    }
+    await _playTrack(
+      album: album,
+      track: track,
+      trackIndex: trackIndex == -1 ? null : trackIndex,
+      playlistId: null,
+      playlistTrackIndex: null,
+    );
+  }
+
+  Future<void> _playPlaylistTrack(ResolvedPlaylistTrack item) async {
+    final playlist = _browsingPlaylist ?? _playlistById(_activePlaylistId);
+    final playlistId = playlist?.id;
+    final playlistTrackIndex = playlist == null
+        ? null
+        : _resolvedPlaylistTracks(
+            playlist,
+          ).indexWhere((candidate) => candidate.ref.id == item.ref.id);
+    final effectivePlaylistTrackIndex = playlistTrackIndex == -1
+        ? null
+        : playlistTrackIndex;
+    final effectivePlaylistId = effectivePlaylistTrackIndex == null
+        ? null
+        : playlistId;
+
+    if (_songQueue.isEmpty) {
+      await _playPlaylistTrackDirect(
+        item,
+        playlistId: effectivePlaylistId,
+        playlistTrackIndex: effectivePlaylistTrackIndex,
+        clearQueue: false,
+      );
+      return;
+    }
+
+    final action = await _chooseQueuedTrackAction(item.track);
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case _QueuedTrackAction.playNow:
+        await _playPlaylistTrackDirect(
+          item,
+          playlistId: effectivePlaylistId,
+          playlistTrackIndex: effectivePlaylistTrackIndex,
+          clearQueue: true,
+        );
+      case _QueuedTrackAction.addToQueue:
+        await _addTrackToQueue(item.album, item.track);
+    }
+  }
+
+  Future<void> _queuePlaylistTrack(ResolvedPlaylistTrack item) async {
+    await _addTrackToQueue(item.album, item.track);
+  }
+
+  Future<void> _playPlaylistTrackDirect(
+    ResolvedPlaylistTrack item, {
+    required String? playlistId,
+    required int? playlistTrackIndex,
+    required bool clearQueue,
+  }) async {
+    if (clearQueue) {
+      setState(() {
+        _songQueue = <PlaybackQueueItem>[];
+      });
+    }
+    await _playTrack(
+      album: item.album,
+      track: item.track,
+      trackIndex: item.trackIndex,
+      playlistId: playlistId,
+      playlistTrackIndex: playlistTrackIndex,
+    );
+  }
+
+  Future<void> _playTrack({
+    required AlbumInfo album,
+    required TrackInfo track,
+    required int? trackIndex,
+    required String? playlistId,
+    required int? playlistTrackIndex,
+  }) async {
     setState(() {
       _selectedAlbum = album;
       _selectedTrack = track;
-      _selectedTrackIndex = trackIndex == -1 ? null : trackIndex;
+      _selectedTrackIndex = trackIndex;
+      _activePlaylistId = playlistId;
+      _selectedPlaylistTrackIndex = playlistTrackIndex;
       _position = Duration.zero;
       _duration = Duration.zero;
       _status = 'Loading ${track.title}...';
@@ -1006,6 +1763,24 @@ class _AudioHomePageState extends State<AudioHomePage> {
     }
   }
 
+  Future<void> _playQueueHead() async {
+    if (_songQueue.isEmpty) {
+      _finishQueue('Queue finished.');
+      return;
+    }
+    await _playQueueItem(_songQueue.first);
+  }
+
+  Future<void> _playQueueItem(PlaybackQueueItem item) async {
+    await _playTrack(
+      album: item.album,
+      track: item.track,
+      trackIndex: item.trackIndex,
+      playlistId: null,
+      playlistTrackIndex: null,
+    );
+  }
+
   Future<void> _togglePlayPause() async {
     if (_selectedTrack == null) {
       return;
@@ -1029,6 +1804,15 @@ class _AudioHomePageState extends State<AudioHomePage> {
   }
 
   Future<void> _playPreviousTrack() async {
+    if (_songQueue.isNotEmpty) {
+      _player.seek(Duration.zero);
+      return;
+    }
+    if (_activePlaylistId != null) {
+      await _playPreviousTrackInPlaylist();
+      return;
+    }
+
     final album = _selectedAlbum;
     final index = _selectedTrackIndex;
     if (album == null || index == null) {
@@ -1038,34 +1822,141 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _player.seek(Duration.zero);
       return;
     }
-    await _playTrack(album, album.tracks[index - 1]);
+    await _playTrackDirect(album, album.tracks[index - 1], clearQueue: false);
   }
 
   Future<void> _playNextTrack() async {
-    await _playNextTrackInAlbum(autoAdvance: false);
+    if (_songQueue.isNotEmpty) {
+      await _consumeQueueHead(finishedNaturally: false);
+      return;
+    }
+    if (_activePlaylistId != null) {
+      await _playNextTrackInPlaylist();
+      return;
+    }
+    await _playNextTrackInAlbum();
   }
 
-  Future<void> _playNextTrackInAlbum({required bool autoAdvance}) async {
+  Future<void> _playPreviousTrackInPlaylist() async {
+    final activeTracks = _activePlaylistTracks();
+    final index = _selectedPlaylistTrackIndex;
+    if (activeTracks.isEmpty || index == null || index <= 0) {
+      _player.seek(Duration.zero);
+      return;
+    }
+
+    await _playPlaylistTrackDirect(
+      activeTracks[index - 1],
+      playlistId: _activePlaylistId,
+      playlistTrackIndex: index - 1,
+      clearQueue: false,
+    );
+  }
+
+  Future<void> _playNextTrackInPlaylist() async {
+    final activeTracks = _activePlaylistTracks();
+    final index = _selectedPlaylistTrackIndex;
+    if (activeTracks.isEmpty || index == null) {
+      _finishPlaybackContext('Finished playlist.');
+      return;
+    }
+
+    final nextIndex = index + 1;
+    if (nextIndex >= activeTracks.length) {
+      _finishPlaybackContext('Finished playlist.');
+      return;
+    }
+
+    await _playPlaylistTrackDirect(
+      activeTracks[nextIndex],
+      playlistId: _activePlaylistId,
+      playlistTrackIndex: nextIndex,
+      clearQueue: false,
+    );
+  }
+
+  Future<void> _playNextTrackInAlbum() async {
     final album = _selectedAlbum;
     final index = _selectedTrackIndex;
     if (album == null || index == null) {
+      _finishPlaybackContext('Finished album.');
       return;
     }
     final nextIndex = index + 1;
     if (nextIndex >= album.tracks.length) {
-      if (autoAdvance && mounted) {
-        setState(() {
-          _isPlaying = false;
-          _status = 'Finished album.';
-        });
-      }
+      _finishPlaybackContext('Finished album.');
       return;
     }
-    await _playTrack(album, album.tracks[nextIndex]);
+    await _playTrackDirect(album, album.tracks[nextIndex], clearQueue: false);
+  }
+
+  Future<void> _consumeQueueHead({required bool finishedNaturally}) async {
+    if (_songQueue.isEmpty) {
+      _finishQueue('Queue finished.');
+      return;
+    }
+
+    setState(() {
+      _songQueue = _songQueue.skip(1).toList();
+    });
+
+    if (_songQueue.isEmpty) {
+      _finishQueue(finishedNaturally ? 'Queue finished.' : 'Queue ended.');
+      return;
+    }
+
+    await _playQueueHead();
+  }
+
+  Future<void> _selectQueueItem(int index) async {
+    if (index < 0 || index >= _songQueue.length) {
+      return;
+    }
+    if (index == 0) {
+      return;
+    }
+
+    setState(() {
+      _songQueue = _songQueue.skip(index).toList();
+    });
+    await _playQueueHead();
+  }
+
+  void _finishQueue(String status) {
+    _finishPlaybackContext(status, clearQueue: true);
+  }
+
+  void _finishPlaybackContext(String status, {bool clearQueue = false}) {
+    _player.pause();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (clearQueue) {
+        _songQueue = <PlaybackQueueItem>[];
+      }
+      _selectedAlbum = null;
+      _selectedTrack = null;
+      _selectedTrackIndex = null;
+      _activePlaylistId = null;
+      _selectedPlaylistTrackIndex = null;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _isPlaying = false;
+      _status = status;
+    });
   }
 
   void _handleTrackEnded() {
-    unawaited(_playNextTrackInAlbum(autoAdvance: true));
+    if (_songQueue.isNotEmpty) {
+      unawaited(_consumeQueueHead(finishedNaturally: true));
+      return;
+    }
+    if (_activePlaylistId != null) {
+      unawaited(_playNextTrackInPlaylist());
+      return;
+    }
+    unawaited(_playNextTrackInAlbum());
   }
 
   void _seekTo(double milliseconds) {
@@ -1074,10 +1965,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
 
   bool get _hasPreviousTrack => _selectedTrack != null;
 
-  bool get _hasNextTrack =>
-      _selectedAlbum != null &&
-      _selectedTrackIndex != null &&
-      _selectedTrackIndex! < _selectedAlbum!.tracks.length - 1;
+  bool get _hasNextTrack => _selectedTrack != null;
 
   String _serverBaseUrlForTrack(TrackInfo track) {
     final uri = Uri.tryParse(track.streamUrl);
@@ -1144,7 +2032,11 @@ class _AudioHomePageState extends State<AudioHomePage> {
             availableGenres: _genres,
             onBack: _showLibraryGrid,
             onDismissed: _hideAlbumDetail,
-            onTrackSelected: _playTrack,
+            onTrackSelected: _playSelectedTrack,
+            onTrackQueued: (album, track) =>
+                unawaited(_addTrackToQueue(album, track)),
+            onTrackPlaylist: (album, track) =>
+                unawaited(_showSaveTrackToPlaylistDialog(album, track)),
             onGenreSelected: _assignAlbumGenre,
             onCreateGenre: _createGenre,
           ),
@@ -1171,6 +2063,45 @@ class _AudioHomePageState extends State<AudioHomePage> {
     );
   }
 
+  Widget _buildPlaylistsContent() {
+    final browsingPlaylist = _browsingPlaylist;
+    return PlaylistsPage(
+      playlists: _playlists,
+      previewAlbumsByPlaylist: _playlistPreviewAlbums(),
+      selectedPlaylist: browsingPlaylist,
+      selectedTracks: browsingPlaylist == null
+          ? const <ResolvedPlaylistTrack>[]
+          : _resolvedPlaylistTracks(browsingPlaylist),
+      selectedTrack: _selectedTrack,
+      onPlaylistSelected: _showPlaylist,
+      onCreatePlaylist: () => unawaited(_createPlaylistFromPlaylistsPage()),
+      onBack: _showPlaylistGrid,
+      onRenamePlaylist: (playlist) => unawaited(_renamePlaylist(playlist)),
+      onDeletePlaylist: (playlist) => unawaited(_deletePlaylist(playlist)),
+      onTrackSelected: (item) => unawaited(_playPlaylistTrack(item)),
+      onTrackQueued: (item) => unawaited(_queuePlaylistTrack(item)),
+      onTrackRemoved: (item) {
+        final playlist = _browsingPlaylist;
+        if (playlist == null) {
+          return;
+        }
+        unawaited(_removeTrackFromPlaylist(playlist, item));
+      },
+    );
+  }
+
+  Widget _buildSelectedAppContent() {
+    return switch (_selectedAppPage) {
+      _AppPage.library => _buildLibraryContent(),
+      _AppPage.playlists => _buildPlaylistsContent(),
+      _AppPage.displays => const _UnimplementedPage(
+        key: ValueKey('displays-page'),
+        icon: Icons.monitor,
+        title: 'Displays',
+      ),
+    };
+  }
+
   List<AlbumInfo> get _selectedFilteredAlbums {
     return _albumsForGenre(_selectedGenreFilter);
   }
@@ -1183,10 +2114,21 @@ class _AudioHomePageState extends State<AudioHomePage> {
     if (genre == null) {
       return _albums;
     }
-    return [
+    final cacheKey = genreKey(genre);
+    final cached = _filteredAlbumCache[cacheKey];
+    if (cached != null && cached.version == _albumFilterVersion) {
+      return cached.albums;
+    }
+
+    final filteredAlbums = [
       for (final album in _albums)
         if (_sameGenre(album.genre, genre)) album,
     ];
+    _filteredAlbumCache[cacheKey] = _FilteredAlbumCache(
+      version: _albumFilterVersion,
+      albums: filteredAlbums,
+    );
+    return filteredAlbums;
   }
 
   Future<void> _swapScreenContent(VoidCallback updateContent) async {
@@ -1246,10 +2188,16 @@ class _AudioHomePageState extends State<AudioHomePage> {
                                 onRefresh: _refreshLibrary,
                                 onDisconnect: _disconnectFromServer,
                               ),
-                              Expanded(child: _buildLibraryContent()),
+                              AppNavbar(
+                                destinations: _appDestinations,
+                                selectedIndex: _selectedAppPage.index,
+                                onSelected: _selectAppPage,
+                              ),
+                              Expanded(child: _buildSelectedAppContent()),
                               PlayerBar(
                                 selectedAlbum: _selectedAlbum,
                                 selectedTrack: _selectedTrack,
+                                queue: _songQueue,
                                 position: _position,
                                 duration: _duration,
                                 isPlaying: _isPlaying,
@@ -1262,6 +2210,8 @@ class _AudioHomePageState extends State<AudioHomePage> {
                                 onPlayPause: _togglePlayPause,
                                 onPrevious: _playPreviousTrack,
                                 onNext: _playNextTrack,
+                                onQueueItemSelected: (index) =>
+                                    unawaited(_selectQueueItem(index)),
                                 onSeek: _seekTo,
                               ),
                             ],
@@ -1288,6 +2238,17 @@ class _AudioHomePageState extends State<AudioHomePage> {
       _genreColors,
       baseTheme.colorScheme.primary,
     );
+    final themeKey = [
+      selectedGenre,
+      accent.toARGB32(),
+      baseTheme.colorScheme.primary.toARGB32(),
+      baseTheme.brightness.name,
+    ].join('|');
+    final cachedTheme = _cachedGenreTheme;
+    if (_cachedGenreThemeKey == themeKey && cachedTheme != null) {
+      return cachedTheme;
+    }
+
     final greenAccent = _isGreenAccent(accent);
     final blackAccent = _isBlackAccent(accent);
     final whiteAccent = _isWhiteAccent(accent);
@@ -1337,7 +2298,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
           : 0.28,
     );
 
-    return baseTheme.copyWith(
+    final theme = baseTheme.copyWith(
       colorScheme: baseTheme.colorScheme.copyWith(
         primary: primary,
         onPrimary: _onColor(primary),
@@ -1380,6 +2341,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
       ),
       extensions: <ThemeExtension<dynamic>>[collection],
     );
+    _cachedGenreThemeKey = themeKey;
+    _cachedGenreTheme = theme;
+    return theme;
   }
 
   CollectionTheme _collectionForAccent(Color accent, Color primary) {
@@ -1553,6 +2517,119 @@ class _GenreCatalog {
 
   final List<String> genres;
   final Map<String, String> colors;
+}
+
+class _FilteredAlbumCache {
+  const _FilteredAlbumCache({required this.version, required this.albums});
+
+  final int version;
+  final List<AlbumInfo> albums;
+}
+
+enum _QueuedTrackAction { playNow, addToQueue }
+
+enum _AppPage { library, playlists, displays }
+
+class _PlaylistNameDialog extends StatefulWidget {
+  const _PlaylistNameDialog({required this.title, required this.initialName});
+
+  final String title;
+  final String initialName;
+
+  @override
+  State<_PlaylistNameDialog> createState() => _PlaylistNameDialogState();
+}
+
+class _PlaylistNameDialogState extends State<_PlaylistNameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Playlist name'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+class _UnimplementedPage extends StatelessWidget {
+  const _UnimplementedPage({
+    super.key,
+    required this.icon,
+    required this.title,
+  });
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final collection =
+        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: collection.panelStrong.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: collection.panelBorder),
+            boxShadow: [
+              BoxShadow(
+                color: collection.glow.withValues(alpha: 0.14),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 44, color: colorScheme.primary),
+                const SizedBox(height: 14),
+                Text(title, style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 6),
+                Text(
+                  'Not implemented yet',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _GenreColorChoice extends StatelessWidget {

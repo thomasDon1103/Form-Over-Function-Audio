@@ -17,6 +17,8 @@ class AlbumDetailView extends StatefulWidget {
     required this.onBack,
     required this.onDismissed,
     required this.onTrackSelected,
+    required this.onTrackQueued,
+    required this.onTrackPlaylist,
     required this.availableGenres,
     required this.onGenreSelected,
     required this.onCreateGenre,
@@ -30,6 +32,8 @@ class AlbumDetailView extends StatefulWidget {
   final VoidCallback onBack;
   final VoidCallback onDismissed;
   final void Function(AlbumInfo album, TrackInfo track) onTrackSelected;
+  final void Function(AlbumInfo album, TrackInfo track) onTrackQueued;
+  final void Function(AlbumInfo album, TrackInfo track) onTrackPlaylist;
   final List<String> availableGenres;
   final void Function(AlbumInfo album, String genre) onGenreSelected;
   final Future<String?> Function() onCreateGenre;
@@ -155,6 +159,10 @@ class _AlbumDetailViewState extends State<AlbumDetailView>
                               track.streamUrl,
                           onTap: () =>
                               widget.onTrackSelected(widget.album, track),
+                          onQueueTap: () =>
+                              widget.onTrackQueued(widget.album, track),
+                          onPlaylistTap: () =>
+                              widget.onTrackPlaylist(widget.album, track),
                         ),
                     ],
                   ),
