@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+const Color defaultGenreSwatchColor = Color(0xff72baff);
+
 String genreKey(String genre) => genre.trim().toLowerCase();
 
 Color? genreColorFromHex(String? value) {

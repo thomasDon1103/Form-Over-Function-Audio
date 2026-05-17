@@ -99,7 +99,6 @@ class _ExpandedSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final collection =
         Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
-    final defaultGenreColor = Theme.of(context).colorScheme.primary;
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -141,7 +140,7 @@ class _ExpandedSidebar extends StatelessWidget {
                       color: genreColorFor(
                         genre,
                         genreColors,
-                        defaultGenreColor,
+                        defaultGenreSwatchColor,
                       ),
                       onTap: () => onGenreColorSelected(genre),
                     ),

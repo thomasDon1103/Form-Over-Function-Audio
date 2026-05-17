@@ -14,6 +14,7 @@ import '../server_control.dart';
 import '../stream_player.dart';
 import '../widgets/app_navbar.dart';
 import '../widgets/connection_bar.dart';
+import '../widgets/displays/displays_page.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/library_sidebar.dart';
 import '../widgets/library_view.dart';
@@ -1049,7 +1050,7 @@ class _AudioHomePageState extends State<AudioHomePage> {
   }
 
   Future<void> _selectGenreColor(String genre) async {
-    final defaultColor = Theme.of(context).colorScheme.primary;
+    const defaultColor = defaultGenreSwatchColor;
     final currentColor = genreColorFor(genre, _genreColors, defaultColor);
     final selectedColor = await showDialog<Color>(
       context: context,
@@ -2099,10 +2100,9 @@ class _AudioHomePageState extends State<AudioHomePage> {
     return switch (_selectedAppPage) {
       _AppPage.library => _buildLibraryContent(),
       _AppPage.playlists => _buildPlaylistsContent(),
-      _AppPage.displays => const _UnimplementedPage(
-        key: ValueKey('displays-page'),
-        icon: Icons.monitor,
-        title: 'Displays',
+      _AppPage.displays => DisplaysPage(
+        key: const ValueKey('displays-page'),
+        albums: _albums,
       ),
     };
   }
@@ -2608,62 +2608,6 @@ class _PlaylistNameDialogState extends State<_PlaylistNameDialog> {
         ),
         FilledButton(onPressed: _submit, child: const Text('Save')),
       ],
-    );
-  }
-}
-
-class _UnimplementedPage extends StatelessWidget {
-  const _UnimplementedPage({
-    super.key,
-    required this.icon,
-    required this.title,
-  });
-
-  final IconData icon;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final collection =
-        Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: collection.panelStrong.withValues(alpha: 0.82),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: collection.panelBorder),
-            boxShadow: [
-              BoxShadow(
-                color: collection.glow.withValues(alpha: 0.14),
-                blurRadius: 22,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 44, color: colorScheme.primary),
-                const SizedBox(height: 14),
-                Text(title, style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 6),
-                Text(
-                  'Not implemented yet',
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
