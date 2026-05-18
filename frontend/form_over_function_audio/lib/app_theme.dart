@@ -110,35 +110,48 @@ class AppTheme {
     ),
     scaffoldBackgroundColor: collection.backgroundBottom,
     extensions: const [collection],
+    // Console-menu inspiration (PS3 XMB / GameCube): rounded, glossy panels
+    // with a strong cyan rim-light.
     cardTheme: CardThemeData(
       color: collection.panel,
       surfaceTintColor: Colors.transparent,
-      shadowColor: collection.glow.withValues(alpha: 0.22),
-      elevation: 10,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      shadowColor: collection.glow.withValues(alpha: 0.32),
+      elevation: 12,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: const Color(0xff0a1628).withValues(alpha: 0.76),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: Color(0x6687c8ff)),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: Color(0xff72baff), width: 1.5),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4,
+        ),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        side: const BorderSide(color: Color(0x8087c8ff)),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
     listTileTheme: const ListTileThemeData(

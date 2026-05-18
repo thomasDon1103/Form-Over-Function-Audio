@@ -193,20 +193,63 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                   1.0,
                 );
 
+                final colorScheme = Theme.of(context).colorScheme;
                 return Material(
-                  elevation: 18,
-                  shadowColor: collection.glow.withValues(alpha: 0.24),
-                  color: collection.panelStrong,
+                  elevation: 24,
+                  shadowColor: collection.glow.withValues(alpha: 0.34),
+                  color: Colors.transparent,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
+                      // Console-drawer gradient — slightly brighter at top to
+                      // catch the eye, deepening into the panel color.
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          collection.panelStrong,
+                          collection.backgroundTop.withValues(alpha: 0.96),
+                          collection.panelStrong,
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
+                      ),
                       border: Border(
                         top: BorderSide(
-                          color: collection.panelBorder,
-                          width: 1.2,
+                          color: colorScheme.primary.withValues(alpha: 0.6),
+                          width: 1.4,
                         ),
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: collection.glow.withValues(alpha: 0.18),
+                          blurRadius: 32,
+                          offset: const Offset(0, -8),
+                        ),
+                      ],
                     ),
-                    child: GestureDetector(
+                    child: Stack(children: [
+                      // Glossy 2px highlight along the very top edge — the
+                      // PS3 "slot of light" cue.
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 2,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.transparent,
+                                colorScheme.primary.withValues(alpha: 0.7),
+                                Colors.white.withValues(alpha: 0.55),
+                                colorScheme.primary.withValues(alpha: 0.7),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.2, 0.5, 0.8, 1.0],
+                            ),
+                          ),
+                        ),
+                      ),
+                    GestureDetector(
                       behavior: HitTestBehavior.translucent,
                       excludeFromSemantics: true,
                       onTap: _togglePanel,
@@ -266,6 +309,7 @@ class _PlayerBarState extends State<PlayerBar> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
+                    ]),
                   ),
                 );
               },

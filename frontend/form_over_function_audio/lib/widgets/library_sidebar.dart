@@ -37,13 +37,33 @@ class LibrarySidebar extends StatelessWidget {
         Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
 
     return Material(
-      color: collection.panelStrong.withValues(alpha: 0.82),
-      elevation: 10,
-      shadowColor: collection.glow.withValues(alpha: 0.12),
+      color: Colors.transparent,
+      elevation: 14,
+      shadowColor: collection.glow.withValues(alpha: 0.22),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
         width: collapsed ? 70 : 288,
+        decoration: BoxDecoration(
+          // Console-glass: a soft horizontal gradient that's brightest near
+          // the right edge so the panel reads as a lit slab against the page.
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [
+              collection.panelStrong.withValues(alpha: 0.92),
+              collection.panelStrong.withValues(alpha: 0.82),
+              collection.panel.withValues(alpha: 0.78),
+            ],
+            stops: const [0.0, 0.6, 1.0],
+          ),
+          border: Border(
+            right: BorderSide(
+              color: collection.panelBorder.withValues(alpha: 0.85),
+              width: 1.2,
+            ),
+          ),
+        ),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final showExpanded = !collapsed && constraints.maxWidth >= 260;
@@ -349,7 +369,13 @@ class _GenreColorButton extends StatelessWidget {
   }
 }
 
-class _GenreFilterButton extends StatelessWidget {
+/// Console-blade style filter button.
+///
+/// Inspired by the PS3 XMB's secondary list items: an accent "blade" on the
+/// left edge of the selected row, a glossy gradient fill, and a subtle
+/// hover lift on the rest. Bold but understated — never competes with the
+/// content grid.
+class _GenreFilterButton extends StatefulWidget {
   const _GenreFilterButton({
     required this.label,
     required this.selected,
@@ -361,46 +387,146 @@ class _GenreFilterButton extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_GenreFilterButton> createState() => _GenreFilterButtonState();
+}
+
+class _GenreFilterButtonState extends State<_GenreFilterButton> {
+  bool _hovering = false;
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final collection =
         Theme.of(context).extension<CollectionTheme>() ?? AppTheme.collection;
+    final selected = widget.selected;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      decoration: BoxDecoration(
-        color: selected
-            ? colorScheme.primary.withValues(alpha: 0.18)
-            : collection.panel.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: selected ? colorScheme.primary : collection.panelBorder,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.circle_outlined,
-                size: 16,
-                color: selected
-                    ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      cursor: SystemMouseCursors.click,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          gradient: selected
+              ? LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    colorScheme.primary.withValues(alpha: 0.34),
+                    colorScheme.primary.withValues(alpha: 0.10),
+                    collection.panel.withValues(alpha: 0.4),
+                  ],
+                  stops: const [0.0, 0.55, 1.0],
+                )
+              : LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    collection.panel.withValues(
+                      alpha: _hovering ? 0.62 : 0.42,
+                    ),
+                    collection.panelStrong.withValues(
+                      alpha: _hovering ? 0.5 : 0.32,
+                    ),
+                  ],
                 ),
-              ),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected
+                ? colorScheme.primary.withValues(alpha: 0.85)
+                : (_hovering
+                      ? collection.panelBorder.withValues(alpha: 0.95)
+                      : collection.panelBorder),
+            width: selected ? 1.4 : 1.0,
+          ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: collection.glow.withValues(alpha: 0.28),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: widget.onTap,
+            child: Stack(
+              children: [
+                // Bright accent "blade" on the left edge — PS3 XMB cue.
+                if (selected)
+                  Positioned(
+                    left: 0,
+                    top: 4,
+                    bottom: 4,
+                    width: 3,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(2),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            colorScheme.primary,
+                            collection.glow,
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: colorScheme.primary.withValues(alpha: 0.7),
+                            blurRadius: 6,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 11,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.play_arrow_rounded
+                            : Icons.circle_outlined,
+                        size: 16,
+                        color: selected
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: AnimatedDefaultTextStyle(
+                          duration: const Duration(milliseconds: 220),
+                          style: Theme.of(context).textTheme.bodyMedium!
+                              .copyWith(
+                                color: selected
+                                    ? colorScheme.onSurface
+                                    : colorScheme.onSurfaceVariant,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                letterSpacing: selected ? 0.4 : 0.0,
+                              ),
+                          child: Text(
+                            widget.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
+            ),
           ),
         ),
       ),
