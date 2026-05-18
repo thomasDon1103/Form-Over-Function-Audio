@@ -279,6 +279,8 @@ class _CollectionRing extends StatelessWidget {
                   opacity: _lerpDouble(0.38, 1, placement.depth),
                   child: Transform(
                     alignment: Alignment.center,
+                    // Albums always face the viewer head-on — no Y rotation
+                    // as they orbit, so cover art stays fully readable.
                     transform: Matrix4.identity()
                       ..setEntry(3, 2, 0.0014)
                       ..multiply(
@@ -287,8 +289,7 @@ class _CollectionRing extends StatelessWidget {
                           placement.scale,
                           1,
                         ),
-                      )
-                      ..rotateY(-math.sin(placement.angle) * 0.42),
+                      ),
                     child: _GlassAlbumCover(
                       key: ValueKey(
                         'display-album-${placement.album.location}',
@@ -466,29 +467,38 @@ class _WaterAlbumReflection extends StatelessWidget {
       (size.width / 2) + placement.x,
       (size.height * 0.545) + placement.y,
     );
-    final reflectionSize =
-        albumSize * placement.scale * _lerpDouble(0.72, 1.02, placement.depth);
-    final reflectionHeight =
-        reflectionSize * _lerpDouble(0.56, 0.98, placement.depth);
-    final distanceFromHorizon = math.max(0.0, albumCenter.dy - horizon);
-    final reflectionTop =
-        horizon +
-        (distanceFromHorizon * 0.46) +
-        _lerpDouble(6, 22, placement.depth);
-    final opacity = _lerpDouble(0.1, 0.42, placement.depth);
+    // The reflection is full-sized (matches the album) so it reads as a true
+    // mirror image rather than a faint smudge.
+    final reflectionWidth = albumSize * placement.scale;
+    final reflectionHeight = reflectionWidth;
+
+    // The album's bottom edge tells us where its base sits in screen space.
+    final albumBottom = albumCenter.dy + (reflectionWidth / 2);
+    // Push the reflection well below the album so it appears the album is
+    // hovering ABOVE the water rather than resting on it. The gap grows with
+    // depth so front (closer) albums float visibly higher.
+    final floatGap = _lerpDouble(28, 64, placement.depth);
+    final reflectionTop = math.max(horizon, albumBottom + floatGap);
+    // Reflections are visibly more transparent than the originals to better
+    // mimic real water — even at their brightest they only reach about half
+    // the original intensity.
+    final opacity = _lerpDouble(0.18, 0.5, placement.depth);
 
     return Positioned(
-      left: albumCenter.dx - (reflectionSize / 2),
+      left: albumCenter.dx - (reflectionWidth / 2),
       top: reflectionTop,
-      width: reflectionSize,
+      width: reflectionWidth,
       height: reflectionHeight,
       child: IgnorePointer(
         child: Opacity(
           opacity: opacity,
           child: ImageFiltered(
+            // A touch of horizontal blur to suggest gentle water distortion,
+            // and a slightly stronger vertical blur to fake the stretch of
+            // ripples without obliterating the image.
             imageFilter: ui.ImageFilter.blur(
-              sigmaX: _lerpDouble(0.4, 1.1, 1 - placement.depth),
-              sigmaY: 1.8,
+              sigmaX: _lerpDouble(0.6, 1.4, 1 - placement.depth),
+              sigmaY: 1.4,
             ),
             child: ShaderMask(
               blendMode: BlendMode.dstIn,
@@ -498,31 +508,28 @@ class _WaterAlbumReflection extends StatelessWidget {
                   end: Alignment.bottomCenter,
                   colors: [
                     Colors.white,
-                    Colors.white.withValues(alpha: 0.48),
+                    Colors.white.withValues(alpha: 0.85),
+                    Colors.white.withValues(alpha: 0.35),
                     Colors.transparent,
                   ],
-                  stops: const [0, 0.36, 1],
+                  stops: const [0, 0.4, 0.75, 1],
                 ).createShader(rect);
               },
               child: ClipRect(
                 child: OverflowBox(
                   alignment: Alignment.topCenter,
-                  minWidth: reflectionSize,
-                  maxWidth: reflectionSize,
-                  minHeight: reflectionSize,
-                  maxHeight: reflectionSize,
-                  child: Transform(
-                    alignment: Alignment.center,
-                    transform: Matrix4.identity()
-                      ..setEntry(3, 2, 0.0014)
-                      ..rotateY(-math.sin(placement.angle) * 0.26),
-                    child: Transform.scale(
-                      scaleY: -1,
-                      child: _GlassAlbumCover(
-                        album: placement.album,
-                        depth: placement.depth,
-                        foilPhase: placement.foilPhase,
-                      ),
+                  minWidth: reflectionWidth,
+                  maxWidth: reflectionWidth,
+                  minHeight: reflectionWidth,
+                  maxHeight: reflectionWidth,
+                  // Reflection also faces the viewer — only vertically
+                  // flipped to mirror the album above it.
+                  child: Transform.scale(
+                    scaleY: -1,
+                    child: _GlassAlbumCover(
+                      album: placement.album,
+                      depth: placement.depth,
+                      foilPhase: placement.foilPhase,
                     ),
                   ),
                 ),
@@ -647,76 +654,202 @@ class _DisplayAtmospherePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final backgroundPaint = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.82, -0.82),
-        radius: 1.05,
-        colors: [
-          primary.withValues(alpha: 0.2),
-          collection.backgroundMiddle.withValues(alpha: 0.74),
-          collection.backgroundBottom,
-        ],
-        stops: const [0, 0.42, 1],
-      ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, backgroundPaint);
-
-    final rayPaint = Paint()..blendMode = BlendMode.plus;
-    final origin = Offset(size.width * 0.06, -size.height * 0.04);
-    final rayLength = math.max(size.width, size.height) * 1.8;
+    final horizon = size.height * 0.56;
     final loop = shimmer * math.pi * 2;
-    for (var i = 0; i < 10; i += 1) {
-      final startAngle =
-          (0.12 + (i * 0.115)) + (math.sin(loop + (i * 0.34)) * 0.03);
-      final width = 0.075 + ((i % 3) * 0.032);
-      final path = Path()
-        ..moveTo(origin.dx, origin.dy)
-        ..lineTo(
-          origin.dx + math.cos(startAngle) * rayLength,
-          origin.dy + math.sin(startAngle) * rayLength,
-        )
-        ..lineTo(
-          origin.dx + math.cos(startAngle + width) * rayLength,
-          origin.dy + math.sin(startAngle + width) * rayLength,
-        )
-        ..close();
-      rayPaint.shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
+
+    // Base sky gradient – deep night fading to a warmer band near the horizon.
+    final skyRect = Rect.fromLTWH(0, 0, size.width, horizon);
+    final skyPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
         colors: [
-          Colors.white.withValues(alpha: 0.0),
-          primary.withValues(alpha: 0.064),
-          Colors.white.withValues(alpha: 0.0),
+          collection.backgroundBottom,
+          collection.backgroundTop,
+          collection.backgroundMiddle.withValues(alpha: 0.92),
+          Color.lerp(
+            collection.backgroundMiddle,
+            primary,
+            0.18,
+          )!.withValues(alpha: 0.95),
         ],
-      ).createShader(Offset.zero & size);
-      canvas.drawPath(path, rayPaint);
+        stops: const [0, 0.36, 0.78, 1],
+      ).createShader(skyRect);
+    canvas.drawRect(skyRect, skyPaint);
+
+    // Soft auroral glow high in the sky.
+    final auroraRect = Rect.fromLTWH(0, 0, size.width, horizon);
+    final auroraPaint = Paint()
+      ..blendMode = BlendMode.plus
+      ..shader = RadialGradient(
+        center: const Alignment(-0.55, -0.85),
+        radius: 1.15,
+        colors: [
+          primary.withValues(alpha: 0.22),
+          primary.withValues(alpha: 0.08),
+          Colors.transparent,
+        ],
+        stops: const [0, 0.45, 1],
+      ).createShader(auroraRect);
+    canvas.drawRect(auroraRect, auroraPaint);
+
+    // Moon disc — the light source for the rays and water highlight.
+    final moonCenter = Offset(size.width * 0.22, horizon - size.height * 0.30);
+    final moonRadius = size.shortestSide * 0.052;
+    final moonHaloPaint = Paint()
+      ..blendMode = BlendMode.plus
+      ..shader = RadialGradient(
+        colors: [
+          Colors.white.withValues(alpha: 0.55),
+          primary.withValues(alpha: 0.22),
+          Colors.transparent,
+        ],
+        stops: const [0, 0.35, 1],
+      ).createShader(
+        Rect.fromCircle(center: moonCenter, radius: moonRadius * 5.2),
+      );
+    canvas.drawCircle(moonCenter, moonRadius * 5.2, moonHaloPaint);
+    final moonPaint = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(-0.25, -0.3),
+        radius: 0.95,
+        colors: [
+          const Color(0xfff4faff),
+          const Color(0xffd5e7fb),
+          const Color(0xff8eb2d8).withValues(alpha: 0.9),
+        ],
+        stops: const [0, 0.62, 1],
+      ).createShader(
+        Rect.fromCircle(center: moonCenter, radius: moonRadius),
+      );
+    canvas.drawCircle(moonCenter, moonRadius, moonPaint);
+
+    // Stars — only above the horizon, with a parallax-friendly twinkle.
+    final starPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.7)
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < 70; i += 1) {
+      final seed = i * 53.13;
+      final x = ((math.sin(seed) + 1) / 2) * size.width;
+      final y = ((math.cos(seed * 1.91) + 1) / 2) * horizon * 0.82;
+      // Avoid putting stars on top of the moon disc.
+      if ((Offset(x, y) - moonCenter).distance < moonRadius * 3.4) {
+        continue;
+      }
+      final twinkle =
+          0.35 + ((math.sin(loop * 1.3 + seed) + 1) / 2) * 0.65;
+      final radius = 0.55 + ((i % 5) * 0.32) * twinkle;
+      starPaint.color = Colors.white.withValues(alpha: 0.32 + 0.5 * twinkle);
+      canvas.drawCircle(Offset(x, y), radius, starPaint);
+      // A faint cross-flare on the brightest stars.
+      if (i % 9 == 0) {
+        starPaint.strokeWidth = 0.7;
+        starPaint.color = Colors.white.withValues(alpha: 0.22 * twinkle);
+        final flare = radius * 4.2;
+        canvas.drawLine(
+          Offset(x - flare, y),
+          Offset(x + flare, y),
+          starPaint,
+        );
+        canvas.drawLine(
+          Offset(x, y - flare),
+          Offset(x, y + flare),
+          starPaint,
+        );
+      }
     }
 
-    final starPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.54)
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 1.2;
-    for (var i = 0; i < 28; i += 1) {
-      final seed = i * 37.41;
-      final x = ((math.sin(seed) + 1) / 2) * size.width;
-      final y =
-          ((math.cos(seed * 1.73 + shimmer * math.pi * 2) + 1) / 2) *
-          size.height *
-          0.78;
-      final pulse =
-          0.45 + (math.sin((shimmer * math.pi * 2) + seed) + 1) * 0.28;
-      final radius = 1.2 + ((i % 4) * 0.55) * pulse;
-      final center = Offset(x, y + size.height * 0.08);
-      canvas.drawLine(
-        center.translate(-radius, 0),
-        center.translate(radius, 0),
-        starPaint,
-      );
-      canvas.drawLine(
-        center.translate(0, -radius),
-        center.translate(0, radius),
-        starPaint,
-      );
+    // A whisper of horizon haze sitting just above the water — drawn BEFORE
+    // the mountains so they read as the closest silhouettes.
+    final hazeRect = Rect.fromLTWH(
+      0,
+      horizon - size.height * 0.07,
+      size.width,
+      size.height * 0.07,
+    );
+    final hazePaint = Paint()
+      ..blendMode = BlendMode.screen
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.transparent,
+          primary.withValues(alpha: 0.08),
+          Colors.white.withValues(alpha: 0.05),
+        ],
+        stops: const [0, 0.55, 1],
+      ).createShader(hazeRect);
+    canvas.drawRect(hazeRect, hazePaint);
+
+    // Distant mountain silhouettes — three layers for depth. All baselines
+    // sit EXACTLY on the horizon so the silhouettes never dip into the water.
+    _paintMountainLayer(
+      canvas,
+      size,
+      horizon: horizon,
+      amplitude: size.height * 0.08,
+      frequency: 1.6,
+      phase: 0.4,
+      color: Color.lerp(
+        collection.backgroundMiddle,
+        primary,
+        0.18,
+      )!.withValues(alpha: 0.42),
+    );
+    _paintMountainLayer(
+      canvas,
+      size,
+      horizon: horizon,
+      amplitude: size.height * 0.11,
+      frequency: 1.05,
+      phase: 1.7,
+      color: Color.lerp(
+        collection.backgroundTop,
+        collection.backgroundBottom,
+        0.35,
+      )!.withValues(alpha: 0.72),
+    );
+    _paintMountainLayer(
+      canvas,
+      size,
+      horizon: horizon,
+      amplitude: size.height * 0.16,
+      frequency: 0.7,
+      phase: 2.9,
+      color: collection.backgroundBottom.withValues(alpha: 0.95),
+    );
+  }
+
+  void _paintMountainLayer(
+    Canvas canvas,
+    Size size, {
+    required double horizon,
+    required double amplitude,
+    required double frequency,
+    required double phase,
+    required Color color,
+  }) {
+    // The baseline is EXACTLY the horizon so the silhouette meets the water
+    // line cleanly and never appears to be submerged.
+    final baseline = horizon;
+    final path = Path()..moveTo(-size.width * 0.05, baseline);
+    const steps = 48;
+    for (var i = 0; i <= steps; i += 1) {
+      final t = i / steps;
+      final x = -size.width * 0.05 + (size.width * 1.1 * t);
+      // Combine a few sine waves to get jagged-yet-natural ridgelines.
+      final ridge =
+          math.sin((t * math.pi * 2 * frequency) + phase) * 0.55 +
+          math.sin((t * math.pi * 2 * frequency * 2.3) + phase * 1.7) * 0.3 +
+          math.sin((t * math.pi * 2 * frequency * 4.1) + phase * 0.4) * 0.15;
+      final y = baseline - ((ridge + 1) / 2) * amplitude;
+      path.lineTo(x, y);
     }
+    path
+      ..lineTo(size.width * 1.05, baseline)
+      ..close();
+    final paint = Paint()..color = color;
+    canvas.drawPath(path, paint);
   }
 
   @override
@@ -746,66 +879,62 @@ class _WaterPlanePainter extends CustomPainter {
     final planeBounds = planePath.getBounds();
     final loop = shimmer * math.pi * 2;
 
+    // Base water color – darker near the viewer, lighter at the far horizon.
+    // This mimics the way real water reflects more sky as the viewing angle
+    // becomes more grazing (Fresnel-like behavior).
+    final deepWater = const Color(0xff020812);
+    final shallowReflection = Color.lerp(
+      collection.backgroundMiddle,
+      primary,
+      0.35,
+    )!;
     final planePaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          collection.backgroundMiddle.withValues(alpha: 0.48),
-          primary.withValues(alpha: 0.14),
-          const Color(0xff06111f).withValues(alpha: 0.9),
-          collection.backgroundBottom.withValues(alpha: 0.98),
+          shallowReflection.withValues(alpha: 0.78),
+          collection.backgroundMiddle.withValues(alpha: 0.62),
+          const Color(0xff04101e).withValues(alpha: 0.96),
+          deepWater,
         ],
-        stops: const [0, 0.18, 0.62, 1],
+        stops: const [0, 0.22, 0.7, 1],
       ).createShader(planeBounds);
     canvas.drawPath(planePath, planePaint);
 
-    final mistRect = Rect.fromLTWH(
-      -size.width * 0.05,
-      horizon - (size.height * 0.08),
-      size.width * 1.1,
-      size.height * 0.095,
+    // A subtle, perspective-correct "sheen" near the horizon. Real bodies of
+    // water appear noticeably brighter at the far edge because they reflect
+    // the brighter sky almost mirror-like at grazing angles.
+    final fresnelRect = Rect.fromLTWH(
+      0,
+      horizon,
+      size.width,
+      size.height * 0.18,
     );
-    final distantMistPaint = Paint()
+    final fresnelPaint = Paint()
       ..blendMode = BlendMode.screen
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Colors.transparent,
-          Colors.white.withValues(alpha: 0.075),
-          primary.withValues(alpha: 0.035),
-          Colors.transparent,
-        ],
-        stops: const [0, 0.34, 0.64, 1],
-      ).createShader(mistRect);
-    canvas.drawRect(mistRect, distantMistPaint);
-
-    final glowPaint = Paint()
-      ..blendMode = BlendMode.plus
-      ..shader = RadialGradient(
-        center: Alignment(
-          -0.72 + (math.sin(loop + 0.6) * 0.06),
-          -0.46 + (math.cos(loop + 0.45) * 0.035),
-        ),
-        radius: 1.12,
-        colors: [
-          Colors.white.withValues(alpha: 0.18),
-          primary.withValues(alpha: 0.15),
+          Colors.white.withValues(alpha: 0.11),
+          primary.withValues(alpha: 0.08),
           Colors.transparent,
         ],
-        stops: const [0, 0.42, 1],
-      ).createShader(planeBounds);
-    canvas.drawPath(planePath, glowPaint);
+        stops: const [0, 0.45, 1],
+      ).createShader(fresnelRect);
+    canvas.drawRect(fresnelRect, fresnelPaint);
 
+    // A soft horizon line — bright, hairline, slightly hazy. Sells the
+    // impression of distant water meeting the sky.
     final horizonPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
+      ..strokeWidth = 1.2
       ..shader = LinearGradient(
         colors: [
           Colors.transparent,
-          Colors.white.withValues(alpha: 0.16),
-          primary.withValues(alpha: 0.14),
+          Colors.white.withValues(alpha: 0.28),
+          primary.withValues(alpha: 0.22),
           Colors.transparent,
         ],
       ).createShader(Rect.fromLTWH(0, horizon - 16, size.width, 32));
@@ -815,30 +944,17 @@ class _WaterPlanePainter extends CustomPainter {
       horizonPaint,
     );
 
-    final surfacePaint = Paint()
-      ..blendMode = BlendMode.screen
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white.withValues(alpha: 0.16),
-          Colors.transparent,
-          primary.withValues(alpha: 0.12),
-        ],
-        stops: const [0, 0.36, 1],
-      ).createShader(planeBounds);
-    canvas.drawPath(planePath, surfacePaint);
-
+    // Subtle vignette pulls the eye toward the center.
     final vignettePaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
           Colors.transparent,
-          Colors.black.withValues(alpha: 0.08),
-          Colors.black.withValues(alpha: 0.28),
+          Colors.black.withValues(alpha: 0.10),
+          Colors.black.withValues(alpha: 0.34),
         ],
-        stops: const [0, 0.58, 1],
+        stops: const [0, 0.55, 1],
       ).createShader(planeBounds);
     canvas.drawPath(planePath, vignettePaint);
   }
@@ -867,125 +983,126 @@ class _WaterSurfacePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final planePath = _waterPlanePath(size, horizon);
     final planeBounds = planePath.getBounds();
-    final loop = shimmer * math.pi * 2;
+    // The ambient controller is intentionally slow (driving the orbiting
+    // ring), so we multiply its phase here to give the water its own,
+    // much livelier sense of motion.
+    final loop = shimmer * math.pi * 2 * 14;
+    final waterHeight = planeBounds.height;
 
     canvas.save();
     canvas.clipPath(planePath);
 
-    final ripplePaint = Paint()
+    // ----- Layer 1: Perspective-compressed horizontal ripple bands -----
+    // Real water shows compressed, near-horizontal wave bands that get thinner
+    // and closer together as they recede toward the horizon. We model this
+    // with rows whose vertical density follows a quadratic perspective curve.
+    final bandPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = 1.1
       ..blendMode = BlendMode.plus;
 
-    final distantShimmerPaint = Paint()
-      ..blendMode = BlendMode.plus
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 0.7;
-    for (var i = 0; i < 38; i += 1) {
-      final row = i ~/ 2;
-      final side = i.isEven ? -1.0 : 1.0;
-      final depth = row / 18;
-      final span = planeBounds.width * _lerpDouble(0.06, 0.24, depth);
-      final centerX =
-          (size.width * 0.5) +
-          side * planeBounds.width * _lerpDouble(0.04, 0.42, depth) +
-          math.sin(loop + (i * 1.37)) * 8;
+    const totalBands = 60;
+    for (var i = 0; i < totalBands; i += 1) {
+      // "depth" goes from 0 (far, at horizon) to 1 (near, at bottom edge).
+      final depth = math.pow(i / (totalBands - 1), 2.0).toDouble();
       final y =
           horizon +
-          (planeBounds.height *
-              _lerpDouble(0.012, 0.22, math.pow(depth, 1.7).toDouble()));
-      distantShimmerPaint.color = Colors.white.withValues(
-        alpha: _lerpDouble(0.09, 0.025, depth),
-      );
-      canvas.drawLine(
-        Offset(centerX - span, y),
-        Offset(centerX + span, y + math.sin(loop + i) * 1.6),
-        distantShimmerPaint,
-      );
-    }
+          waterHeight * depth +
+          math.sin(loop * 0.8 + i * 0.31) * _lerpDouble(0.3, 2.8, depth);
 
-    for (var i = 0; i < 26; i += 1) {
-      final depth = i / 25;
-      final y =
-          planeBounds.top +
-          (planeBounds.height * (0.05 + (math.pow(depth, 1.56) * 0.9))) +
-          (math.sin(loop + (i * 0.72)) * _lerpDouble(0.4, 4.8, depth));
-      final inset = planeBounds.width * _lerpDouble(0.04, 0.0, depth);
-      final amplitude = _lerpDouble(0.35, 6.6, depth);
-      final waveShift =
-          math.sin((loop * 2) + (i * 1.1)) * _lerpDouble(1, 18, depth);
-      final path = Path()..moveTo(planeBounds.left + inset, y);
-      for (var step = 1; step <= 14; step += 1) {
-        final t = step / 14;
-        final x =
-            planeBounds.left + inset + ((planeBounds.width - inset * 2) * t);
-        final wave = math.sin((t * math.pi * 3.4) + loop + (i * 0.51));
-        path.lineTo(
-          x + waveShift * (1 - (t - 0.5).abs()),
-          y + wave * amplitude,
-        );
+      // A gentle low-frequency wave that flows horizontally over time.
+      final phase = loop * 0.6 + i * 0.27;
+      final amplitude = _lerpDouble(0.25, 3.6, depth);
+
+      final path = Path();
+      const samples = 48;
+      for (var s = 0; s <= samples; s += 1) {
+        final t = s / samples;
+        final x = -size.width * 0.05 + (size.width * 1.1 * t);
+        final wave =
+            math.sin((t * math.pi * 5.0) + phase) * amplitude +
+            math.sin((t * math.pi * 13.0) + phase * 1.7) *
+                amplitude * 0.35;
+        final py = y + wave;
+        if (s == 0) {
+          path.moveTo(x, py);
+        } else {
+          path.lineTo(x, py);
+        }
       }
-      ripplePaint.color = Colors.white.withValues(
-        alpha: _lerpDouble(0.018, 0.11, depth),
-      );
-      ripplePaint.strokeWidth = _lerpDouble(0.45, 1.2, depth);
-      canvas.drawPath(path, ripplePaint);
+
+      // Bands are very thin/faint near the horizon, slightly thicker near us.
+      bandPaint
+        ..strokeWidth = _lerpDouble(0.4, 1.05, depth)
+        ..color = Colors.white.withValues(
+          alpha: _lerpDouble(0.06, 0.04, depth),
+        );
+      canvas.drawPath(path, bandPaint);
     }
 
+    // ----- Layer 2: Scattered specular highlights across the water -----
+    // Sky reflections catching on individual wave facets — distributed across
+    // the whole surface to give the water a lively, broken-mirror quality.
+    final scatterPaint = Paint()
+      ..blendMode = BlendMode.plus
+      ..strokeCap = StrokeCap.round;
+    const scatterCount = 120;
+    for (var i = 0; i < scatterCount; i += 1) {
+      final seed = i * 17.31;
+      final depthT = ((math.sin(seed) + 1) / 2);
+      final depth = math.pow(depthT, 1.8).toDouble();
+      final rowY = horizon + waterHeight * depth;
+      final cx =
+          size.width *
+          (((math.cos(seed * 1.7) + 1) / 2) * 1.04 - 0.02);
+      final flicker =
+          0.45 + (math.sin(loop * 1.7 + seed) + 1) / 2 * 0.55;
+      final halfLength = _lerpDouble(2.4, 9, depth);
+      final yWobble =
+          math.sin(loop * 0.9 + seed * 0.7) * _lerpDouble(0.3, 1.6, depth);
+      // Mix cool primary highlights with occasional white sparkles.
+      final useWhite = i % 5 == 0;
+      scatterPaint
+        ..strokeWidth = _lerpDouble(0.55, 1.3, depth)
+        ..color = (useWhite ? Colors.white : primary).withValues(
+          alpha: _lerpDouble(0.12, 0.05, depth) * flicker,
+        );
+      canvas.drawLine(
+        Offset(cx - halfLength, rowY + yWobble),
+        Offset(cx + halfLength, rowY + yWobble),
+        scatterPaint,
+      );
+    }
+
+    // ----- Layer 4: A handful of expanding ripples -----
+    // Like drops occasionally landing on the surface. Cycle through their
+    // life much faster than the ambient controller would naturally allow.
     final ringPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
+      ..strokeWidth = 0.9
       ..blendMode = BlendMode.plus;
-    for (var i = 0; i < 5; i += 1) {
-      final pulse = (math.sin(loop + (i * 1.26)) + 1) / 2;
-      final center = Offset(
-        planeBounds.left + planeBounds.width * (0.16 + ((i * 0.17) % 0.68)),
-        planeBounds.top + planeBounds.height * (0.18 + ((i * 0.14) % 0.64)),
-      );
-      final radiusX = planeBounds.width * (0.018 + (pulse * 0.045));
-      final radiusY = planeBounds.height * (0.006 + (pulse * 0.028));
-      ringPaint.color = primary.withValues(alpha: 0.08 * (1 - pulse));
+    const ripplePhaseSpeed = 6.0;
+    for (var i = 0; i < 4; i += 1) {
+      // Each ripple completes ~6 life cycles per controller loop.
+      final localPhase =
+          ((shimmer * ripplePhaseSpeed) + i * 0.25) % 1.0;
+      final pulse = localPhase; // 0 -> 1
+      final fade = 1 - pulse; // dies out as it expands
+      final centerSeed = i * 41.0;
+      final cxFrac = 0.18 + ((math.sin(centerSeed) + 1) / 2) * 0.7;
+      final cyDepthT = 0.2 + ((math.cos(centerSeed * 1.4) + 1) / 2) * 0.7;
+      final cy = horizon + waterHeight * cyDepthT;
+      final radiusX = size.width * (0.01 + pulse * 0.08);
+      final radiusY = radiusX * _lerpDouble(0.15, 0.35, cyDepthT);
+      ringPaint.color = Colors.white.withValues(alpha: 0.10 * fade);
       canvas.drawOval(
         Rect.fromCenter(
-          center: center,
+          center: Offset(size.width * cxFrac, cy),
           width: radiusX * 2,
           height: radiusY * 2,
         ),
         ringPaint,
       );
-    }
-
-    final reflectionPaint = Paint()
-      ..blendMode = BlendMode.plus
-      ..strokeCap = StrokeCap.round;
-    for (var row = 0; row < 18; row += 1) {
-      final depth = row / 17;
-      final y =
-          horizon +
-          (planeBounds.height * _lerpDouble(0.018, 0.34, depth)) +
-          (math.sin(loop + row) * _lerpDouble(0.4, 2.8, depth));
-      final segmentCount = 4 + (depth * 9).round();
-      for (var segment = 0; segment < segmentCount; segment += 1) {
-        final seed = (row * 23.17) + (segment * 11.61);
-        final center =
-            size.width * (0.08 + (((math.sin(seed + loop) + 1) / 2) * 0.84));
-        final halfLength =
-            planeBounds.width *
-            _lerpDouble(0.018, 0.075, depth) *
-            (0.55 + ((math.cos(seed) + 1) * 0.28));
-        final wave = math.sin(loop + seed) * _lerpDouble(0.6, 3.2, depth);
-        reflectionPaint
-          ..strokeWidth = _lerpDouble(0.55, 1.35, depth)
-          ..color = Colors.white.withValues(
-            alpha: _lerpDouble(0.06, 0.015, depth),
-          );
-        canvas.drawLine(
-          Offset(center - halfLength, y),
-          Offset(center + halfLength, y + wave),
-          reflectionPaint,
-        );
-      }
     }
 
     canvas.restore();
